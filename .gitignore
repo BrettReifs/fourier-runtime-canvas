@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Environment and credentials
+.env
+.env.*
+*.env
+*.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.secret
+*.secrets
+credentials.json
+local.settings.json
+appsettings.*.json
+
+# Generated runtime assets
+fourier-assets/
+fourier-compositions/
+*.fourier.json
+*.fourier-composition.json
+composition-history.json
+
+# Generated development output
+coverage/
+dist/
+build/
+tmp/
+temp/
+*.log
+
+# Editor and operating system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
