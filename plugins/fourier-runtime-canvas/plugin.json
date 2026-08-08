@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "fourier-runtime-canvas",
+  "description": "An experimental frequency-domain canvas for drawing, animating, morphing, and sonifying coefficient-only Fourier path assets.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Brett Reif",
+    "url": "https://github.com/BrettReifs"
+  },
+  "homepage": "https://github.com/BrettReifs/fourier-runtime-canvas",
+  "repository": "https://github.com/BrettReifs/fourier-runtime-canvas",
+  "license": "MIT",
+  "keywords": [
+    "copilot-canvas",
+    "fourier",
+    "frequency-domain",
+    "interactive-canvas",
+    "vector-animation"
+  ],
+  "extensions": {
+    "com.github.copilot": {
+      "logo": "assets/preview.png"
+    },
+    "com.github.awesome-copilot": {
+      "extensions": [
+        "./extensions/fourier-runtime-canvas"
+      ]
+    }
+  }
+}

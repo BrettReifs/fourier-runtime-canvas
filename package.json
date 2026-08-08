@@ -1,0 +1,18 @@
+{
+  "name": "fourier-runtime-canvas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Frequency-domain runtime canvas for drawing, composing, animating, morphing, and sonifying Fourier path assets.",
+  "scripts": {
+    "test": "node --test",
+    "syntax": "node scripts/check-syntax.mjs",
+    "package:check": "npm pack --dry-run --json ./extensions/fourier-runtime-canvas",
+    "validate:package": "node scripts/validate-package.mjs",
+    "validate": "npm run syntax && npm test && npm run validate:package && npm run package:check"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "license": "MIT"
+}
