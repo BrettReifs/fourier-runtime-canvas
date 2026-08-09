@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "fourier-runtime-canvas",
-  "description": "An experimental frequency-domain canvas for drawing, animating, morphing, and sonifying coefficient-only Fourier path assets.",
+  "description": "A semantic presentation and frequency-domain canvas for responsive KPI scenes, hybrid path animation, and synthesized audio.",
   "version": "1.0.0",
   "author": {
     "name": "Brett Reif",
