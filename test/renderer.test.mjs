@@ -5,7 +5,37 @@ import vm from "node:vm";
 import {
     audioCueCrossed,
     renderHtml,
+    selectRuntimeMode,
+    showRuntimeMode,
 } from "../extensions/fourier-runtime-canvas/renderer.mjs";
+
+function runtimeDocument() {
+    const views = ["create", "asset", "series"].map((mode) => ({
+        hidden: mode !== "series",
+        id: `${mode}-view`,
+    }));
+    const tabs = ["create", "asset", "series"].map((mode) => ({
+        classList: {
+            active: mode === "series",
+            toggle(_name, active) {
+                this.active = active;
+            },
+        },
+        dataset: { mode },
+        attributes: new Map([["aria-selected", String(mode === "series")]]),
+        setAttribute(name, value) {
+            this.attributes.set(name, value);
+        },
+        tabIndex: mode === "series" ? 0 : -1,
+    }));
+    return {
+        querySelectorAll(selector) {
+            return selector === ".view" ? views : tabs;
+        },
+        tabs,
+        views,
+    };
+}
 
 test("rendered client script is valid JavaScript", () => {
     const html = renderHtml("renderer-test-nonce");
@@ -51,6 +81,9 @@ test("renderer includes native responsive semantic presentation drawing", () => 
     assert.match(script, /function drawSemanticLine/);
     assert.match(script, /resolvedLayout\.valueScale\(value\.value\)/);
     assert.match(script, /layout\.valueScale\(semantic\.value\)/);
+    assert.match(script, /setMode\(selectRuntimeMode\(state\.mode, composition\)\)/);
+    assert.match(script, /title\.textContent = state\.composition\.presentation\.title/);
+    assert.match(script, /"Presentation revision " \+ state\.composition\.revision/);
     assert.match(script, /context\.fillText/);
     assert.match(script, /context\.fillRect\(pulseLeft, top, pulseWidth, barHeight\)/);
     assert.match(script, /layer\.animation\.emphasis\.pulse/);
@@ -70,6 +103,42 @@ test("hybrid renderer avoids semantic asset loads and exposes accessible playbac
     assert.match(html, /id="scene-summary"[^>]*aria-live="polite"/);
     assert.match(html, /id="restart-composition"/);
     assert.match(html, /aria-describedby="scene-summary"/);
+});
+
+test("semantic initial state and create events select the visible composition view", () => {
+    const semantic = {
+        revision: 3,
+        presentation: { title: "Quarterly KPIs" },
+    };
+    const initialDocument = runtimeDocument();
+    const eventDocument = runtimeDocument();
+
+    showRuntimeMode(initialDocument, selectRuntimeMode("series", semantic));
+    showRuntimeMode(eventDocument, selectRuntimeMode("series", semantic));
+
+    for (const document of [initialDocument, eventDocument]) {
+        assert.equal(document.views.find(({ id }) => id === "asset-view").hidden, false);
+        assert.equal(document.views.find(({ id }) => id === "series-view").hidden, true);
+        assert.equal(document.tabs.find(({ dataset }) => dataset.mode === "asset")
+            .attributes.get("aria-selected"), "true");
+    }
+});
+
+test("series-only opens and Fourier-only composition events preserve their view", () => {
+    const fourierOnly = {
+        revision: 2,
+        layers: [{ type: "fourier", assetId: "mark" }],
+    };
+
+    const seriesDocument = runtimeDocument();
+    const fourierDocument = runtimeDocument();
+
+    showRuntimeMode(seriesDocument, selectRuntimeMode("series", null));
+    showRuntimeMode(fourierDocument, selectRuntimeMode("series", fourierOnly));
+
+    assert.equal(seriesDocument.views.find(({ id }) => id === "series-view").hidden, false);
+    assert.equal(fourierDocument.views.find(({ id }) => id === "series-view").hidden, false);
+    assert.equal(selectRuntimeMode("asset", fourierOnly), "asset");
 });
 
 test("audio cue crossings fire once at starts, positive crossings, and wraps", () => {

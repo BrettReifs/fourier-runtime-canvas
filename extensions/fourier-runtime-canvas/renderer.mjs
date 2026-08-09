@@ -12,6 +12,22 @@ export function audioCueCrossed(
     : trigger > previousTime && trigger <= nextTime;
 }
 
+export function selectRuntimeMode(currentMode, composition) {
+    return composition?.presentation ? "asset" : currentMode;
+}
+
+export function showRuntimeMode(document, mode) {
+    document.querySelectorAll(".view").forEach((view) => {
+        view.hidden = view.id !== mode + "-view";
+    });
+    document.querySelectorAll(".mode-tab").forEach((button) => {
+        const selected = button.dataset.mode === mode;
+        button.classList.toggle("active", selected);
+        button.setAttribute("aria-selected", String(selected));
+        button.tabIndex = selected ? 0 : -1;
+    });
+}
+
 export function renderHtml(nonce) {
     return `<!doctype html>
 <html lang="en">
@@ -460,7 +476,7 @@ export function renderHtml(nonce) {
   <main class="shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">Sine-series runtime bridge</div>
+        <div id="runtime-kind" class="eyebrow">Sine-series runtime bridge</div>
         <h1 id="title">Fourier Runtime Visualizer</h1>
       </div>
       <div class="status-row">
@@ -682,6 +698,8 @@ export function renderHtml(nonce) {
 
   <script nonce="${nonce}">
    ${audioCueCrossed.toString()}
+   ${selectRuntimeMode.toString()}
+   ${showRuntimeMode.toString()}
    const capabilityToken = new URLSearchParams(location.search).get("token");
    if (!capabilityToken) throw new Error("Canvas capability is missing.");
    history.replaceState(null, "", location.pathname);
@@ -839,22 +857,40 @@ export function renderHtml(nonce) {
       context.stroke();
     }
 
+    function updateHeader() {
+      const title = document.querySelector("#title");
+      const status = document.querySelector("#updated");
+      const runtimeKind = document.querySelector("#runtime-kind");
+      if (state.mode === "asset" && state.composition?.presentation) {
+        title.textContent = state.composition.presentation.title;
+        status.textContent = "Presentation revision " + state.composition.revision;
+        runtimeKind.textContent = "Semantic presentation runtime";
+        return;
+      }
+      if (state.mode === "asset") {
+        title.textContent = state.asset?.name ?? "Fourier asset playback";
+        status.textContent = state.asset?.createdAt
+          ? "Asset " + new Date(state.asset.createdAt).toLocaleTimeString()
+          : "Composition revision " + (state.composition?.revision ?? 0);
+        runtimeKind.textContent = "Fourier composition runtime";
+        return;
+      }
+      if (state.mode === "create") {
+        title.textContent = "Create Fourier asset";
+        runtimeKind.textContent = "Frequency asset authoring";
+        return;
+      }
+      title.textContent = state.series?.name ?? "Fourier Runtime Visualizer";
+      status.textContent = state.series?.updatedAt
+        ? "Updated " + new Date(state.series.updatedAt).toLocaleTimeString()
+        : "Waiting for data";
+      runtimeKind.textContent = "Sine-series runtime bridge";
+    }
+
     function setMode(mode) {
       state.mode = mode;
-      document.querySelectorAll(".view").forEach((view) => {
-        view.hidden = view.id !== mode + "-view";
-      });
-      document.querySelectorAll(".mode-tab").forEach((button) => {
-        const selected = button.dataset.mode === mode;
-        button.classList.toggle("active", selected);
-        button.setAttribute("aria-selected", String(selected));
-        button.tabIndex = selected ? 0 : -1;
-      });
-      document.querySelector("#title").textContent = mode === "asset"
-        ? (state.asset?.name ?? "Fourier asset playback")
-        : mode === "create"
-          ? "Create Fourier asset"
-          : (state.series?.name ?? "Fourier Runtime Visualizer");
+      showRuntimeMode(document, mode);
+      updateHeader();
       if (mode === "asset") renderTimeline();
       if (mode === "create") drawInput();
       if (mode === "series") drawSeriesSpectrum();
@@ -1917,9 +1953,6 @@ export function renderHtml(nonce) {
 
     function applySeries(series) {
       state.series = series;
-      if (!state.asset || state.mode === "series") {
-        document.querySelector("#title").textContent = series.name;
-      }
       document.querySelector("#term-count").textContent = series.terms.length;
       document.querySelector("#frequency").textContent = series.fundamentalFrequency.toFixed(2) + " Hz";
       document.querySelector("#formula").textContent =
@@ -1927,8 +1960,7 @@ export function renderHtml(nonce) {
         (series.terms.length > 8 ? " + …" : "");
       document.querySelector("#speed").value = series.runtime.speed;
       document.querySelector("#play").textContent = series.runtime.playing ? "Pause" : "Play";
-      document.querySelector("#updated").textContent =
-        "Updated " + new Date(series.updatedAt).toLocaleTimeString();
+      if (state.mode === "series") updateHeader();
       drawSeriesSpectrum();
     }
 
@@ -2038,11 +2070,7 @@ export function renderHtml(nonce) {
     function applyAsset(asset) {
       state.asset = asset;
       state.assets.set(asset.id, asset);
-      if (state.mode === "asset") {
-        document.querySelector("#title").textContent = asset.name;
-      }
-      document.querySelector("#updated").textContent =
-        "Asset " + new Date(asset.createdAt).toLocaleTimeString();
+      if (state.mode === "asset") updateHeader();
     }
 
     async function loadAssetById(assetId) {
@@ -2134,6 +2162,7 @@ export function renderHtml(nonce) {
       renderTimeline();
       syncLayerEditor();
       updateTimelinePlayhead();
+      setMode(selectRuntimeMode(state.mode, composition));
     }
 
     function applyHistory(history) {
