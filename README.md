@@ -90,6 +90,8 @@ git clone https://github.com/BrettReifs/fourier-runtime-canvas.git
 Set-Location fourier-runtime-canvas
 npm ci --prefix extensions/fourier-runtime-canvas
 npm test
+npm run benchmark:validate
+npm run benchmark:compare
 npm run validate
 npm run package:check
 ```
@@ -263,6 +265,17 @@ explainers, lightweight kinetic brand systems, procedural data stories, and
 reusable motion primitives for developer tools. Any claim about lower cost or
 smaller context should remain a hypothesis until a public benchmark and
 workload methodology exist.
+
+## Experiment harness
+
+The [`benchmarks/`](benchmarks/README.md) directory contains fixed datasets,
+prompts, acceptance criteria, pilot telemetry, and dependency-free comparison
+tools. It is separate from the runtime package so experiments can evolve
+without changing the extension under test.
+
+Run `npm run benchmark:validate` to check dataset limits and result schemas.
+Run `npm run benchmark:compare` to print the pilot creation and revision
+comparison.
 
 ## Contribution status
 
