@@ -23,6 +23,17 @@ import {
     validateCompositionComplexity,
 } from "./composition.mjs";
 import {
+    KPI_CREATE_SCHEMA,
+    KPI_PATCH_SCHEMA,
+    KPI_SYNC_SCHEMA,
+    createKpiComposition,
+    patchKpiComposition,
+    presentationMutationSummary,
+    presentationSummary,
+    presentationWarnings,
+    syncKpiComposition,
+} from "./presentation.mjs";
+import {
     createHistory,
     historyStatus,
     recordHistory,
@@ -294,6 +305,94 @@ const KEYFRAME_SCHEMA = {
     additionalProperties: false,
 };
 
+const PRESENTATION_PALETTE_SCHEMA = {
+    type: "object",
+    required: ["background", "surface", "text", "muted", "axis", "threshold", "accent"],
+    properties: {
+        background: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        surface: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        text: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        muted: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        axis: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        threshold: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        accent: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+    },
+    additionalProperties: false,
+};
+
+const PRESENTATION_ENTRY_SCHEMA = {
+    type: "object",
+    required: ["mode", "start", "duration", "stagger", "easing"],
+    properties: {
+        mode: { type: "string", enum: ["rise", "fade", "none"] },
+        start: { type: "number", minimum: 0, maximum: 300 },
+        duration: { type: "number", minimum: 0, maximum: 10 },
+        stagger: { type: "number", minimum: 0, maximum: 5 },
+        easing: {
+            type: "string",
+            enum: ["linear", "ease-in", "ease-out", "ease-in-out"],
+        },
+    },
+    additionalProperties: false,
+};
+
+const PRESENTATION_EMPHASIS_SCHEMA = {
+    type: "object",
+    required: ["mode", "pulse"],
+    properties: {
+        mode: { type: "string", enum: ["none", "highest", "threshold"] },
+        pulse: { type: "boolean" },
+    },
+    additionalProperties: false,
+};
+
+const PRESENTATION_AXIS_SCHEMA = {
+    type: "object",
+    required: ["show", "label", "ticks"],
+    properties: {
+        show: { type: "boolean" },
+        label: { type: "string", maxLength: 80 },
+        ticks: { type: "integer", minimum: 2, maximum: 10 },
+    },
+    additionalProperties: false,
+};
+
+const PRESENTATION_AUDIO_SCHEMA = {
+    type: "object",
+    required: ["enabled", "triggerTime", "baseFrequency", "gain", "duration"],
+    properties: {
+        enabled: { type: "boolean" },
+        triggerTime: { type: "number", minimum: 0, maximum: 300 },
+        baseFrequency: { type: "number", minimum: 40, maximum: 1200 },
+        gain: { type: "number", minimum: 0, maximum: 0.2 },
+        duration: { type: "number", minimum: 0.03, maximum: 2 },
+    },
+    additionalProperties: false,
+};
+
+const SEMANTIC_ANIMATION_SCHEMA = {
+    type: "object",
+    required: [
+        "mode",
+        "start",
+        "duration",
+        "stagger",
+        "easing",
+        "staggerIndex",
+        "emphasis",
+    ],
+    properties: {
+        ...PRESENTATION_ENTRY_SCHEMA.properties,
+        staggerIndex: {
+            type: "integer",
+            minimum: 0,
+            maximum: COMPOSITION_LIMITS.maxSemanticValues,
+        },
+        emphasis: PRESENTATION_EMPHASIS_SCHEMA,
+    },
+    additionalProperties: false,
+};
+
 const COMPOSITION_SCHEMA = {
     type: "object",
     required: ["format", "revision", "layers"],
@@ -304,15 +403,63 @@ const COMPOSITION_SCHEMA = {
         name: { type: "string", maxLength: 120 },
         duration: { type: "number", minimum: 0.5, maximum: 300 },
         updatedAt: { type: "string" },
+        presentation: {
+            type: "object",
+            required: [
+                "title",
+                "aspectRatio",
+                "style",
+                "palette",
+                "safeArea",
+                "entry",
+                "emphasis",
+                "axis",
+                "threshold",
+                "audio",
+                "accessibleSummary",
+                "semanticLayerFingerprint",
+            ],
+            properties: {
+                title: { type: "string", minLength: 1, maxLength: 160 },
+                aspectRatio: { type: "string", enum: ["16:9", "4:3", "9:16"] },
+                style: { type: "string", enum: ["editorial", "technical", "minimal"] },
+                palette: PRESENTATION_PALETTE_SCHEMA,
+                safeArea: { type: "number", minimum: 0.04, maximum: 0.15 },
+                entry: PRESENTATION_ENTRY_SCHEMA,
+                emphasis: PRESENTATION_EMPHASIS_SCHEMA,
+                axis: PRESENTATION_AXIS_SCHEMA,
+                threshold: {
+                    type: "object",
+                    required: ["show", "value", "label", "color"],
+                    properties: {
+                        show: { type: "boolean" },
+                        value: { type: "number", minimum: 0, maximum: 1_000_000_000 },
+                        label: { type: "string", maxLength: 80 },
+                        color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+                    },
+                    additionalProperties: false,
+                },
+                audio: PRESENTATION_AUDIO_SCHEMA,
+                accessibleSummary: { type: "string", minLength: 1, maxLength: 1200 },
+                semanticLayerFingerprint: {
+                    type: "string",
+                    pattern: "^[0-9a-f]{64}$",
+                },
+            },
+            additionalProperties: false,
+        },
         layers: {
             type: "array",
             maxItems: COMPOSITION_LIMITS.maxLayers,
             items: {
                 type: "object",
-                required: ["assetId"],
                 properties: {
                     id: { type: "string", maxLength: 120 },
                     name: { type: "string", maxLength: 120 },
+                    type: {
+                        type: "string",
+                        enum: ["fourier", "text", "bar-chart", "line"],
+                    },
                     assetId: { type: "string", maxLength: 120 },
                     start: { type: "number", minimum: 0, maximum: 300 },
                     end: { type: "number", minimum: 0, maximum: 300 },
@@ -348,6 +495,103 @@ const COMPOSITION_SCHEMA = {
                         },
                         additionalProperties: false,
                     },
+                    semantic: {
+                        oneOf: [
+                            {
+                                type: "object",
+                                required: [
+                                    "role",
+                                    "text",
+                                    "color",
+                                    "fontFamily",
+                                    "fontWeight",
+                                    "align",
+                                ],
+                                properties: {
+                                    role: {
+                                        type: "string",
+                                        enum: ["title", "label", "annotation"],
+                                    },
+                                    text: { type: "string", minLength: 1, maxLength: 500 },
+                                    color: {
+                                        type: "string",
+                                        pattern: "^#[0-9a-fA-F]{6}$",
+                                    },
+                                    fontFamily: { type: "string", maxLength: 120 },
+                                    fontWeight: {
+                                        type: "integer",
+                                        minimum: 100,
+                                        maximum: 900,
+                                    },
+                                    align: {
+                                        type: "string",
+                                        enum: ["left", "center", "right"],
+                                    },
+                                },
+                                additionalProperties: false,
+                            },
+                            {
+                                type: "object",
+                                required: ["values", "maxValue", "axis"],
+                                properties: {
+                                    values: {
+                                        type: "array",
+                                        minItems: 1,
+                                        maxItems: COMPOSITION_LIMITS.maxSemanticValues,
+                                        items: {
+                                            type: "object",
+                                            required: ["id", "label", "value", "color"],
+                                            properties: {
+                                                id: { type: "string", maxLength: 120 },
+                                                label: { type: "string", maxLength: 80 },
+                                                value: {
+                                                    type: "number",
+                                                    minimum: 0,
+                                                    maximum: 1_000_000_000,
+                                                },
+                                                color: {
+                                                    type: "string",
+                                                    pattern: "^#[0-9a-fA-F]{6}$",
+                                                },
+                                            },
+                                            additionalProperties: false,
+                                        },
+                                    },
+                                    maxValue: {
+                                        type: "number",
+                                        exclusiveMinimum: 0,
+                                        maximum: 1_000_000_000,
+                                    },
+                                    axis: PRESENTATION_AXIS_SCHEMA,
+                                },
+                                additionalProperties: false,
+                            },
+                            {
+                                type: "object",
+                                required: ["role", "value", "label", "color", "width", "style"],
+                                properties: {
+                                    role: { const: "threshold" },
+                                    value: {
+                                        type: "number",
+                                        minimum: 0,
+                                        maximum: 1_000_000_000,
+                                    },
+                                    label: { type: "string", maxLength: 80 },
+                                    color: {
+                                        type: "string",
+                                        pattern: "^#[0-9a-fA-F]{6}$",
+                                    },
+                                    width: { type: "number", minimum: 1, maximum: 8 },
+                                    style: {
+                                        type: "string",
+                                        enum: ["solid", "dashed"],
+                                    },
+                                },
+                                additionalProperties: false,
+                            },
+                        ],
+                    },
+                    animation: SEMANTIC_ANIMATION_SCHEMA,
                     keyframes: {
                         type: "array",
                         maxItems: COMPOSITION_LIMITS.maxKeyframesPerLayer,
@@ -1065,24 +1309,61 @@ function broadcastCompositionState(entry) {
     broadcastHistory(entry);
 }
 
-async function setComposition(entry, input) {
+function layerPayload(layer) {
+    const { updatedAt, ...payload } = layer;
+    return JSON.stringify(payload);
+}
+
+function changedLayerIds(current, next) {
+    const currentById = new Map(current.layers.map((layer) => [layer.id, layerPayload(layer)]));
+    const nextById = new Map(next.layers.map((layer) => [layer.id, layerPayload(layer)]));
+    return [...new Set([...currentById.keys(), ...nextById.keys()])]
+        .filter((id) => currentById.get(id) !== nextById.get(id));
+}
+
+function persistedPresentationDetails(entry, composition, history, changedIds = []) {
+    const historyValue = { undo: history.undo, redo: history.redo };
+    return {
+        assetCount: entry.assets.size,
+        assetBytes: [...entry.assetBytes.values()].reduce((sum, bytes) => sum + bytes, 0),
+        compositionBytes: jsonStorageBytes(composition),
+        historyBytes: jsonStorageBytes(historyValue),
+        changedLayerIds: changedIds,
+        warnings: presentationWarnings(composition),
+    };
+}
+
+async function commitComposition(entry, expectedRevision, buildNext, options = {}) {
     return enqueueMutation(entry.workspacePath, async () => {
-        const expectedRevision = input.revision;
-        if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== entry.composition.revision) {
+        if (
+            expectedRevision !== null
+            && (
+                !Number.isSafeInteger(expectedRevision)
+                || expectedRevision !== entry.composition.revision
+            )
+        ) {
             const error = new CanvasError(
                 "stale_revision",
                 "Composition revision is stale. Reload the canonical composition and retry.",
             );
-            error.current = entry.composition;
+            error.current = options.compactConflict
+                ? { revision: entry.composition.revision }
+                : entry.composition;
             throw error;
         }
-        const next = normalizeComposition(input, new Set(entry.assets.keys()));
+        const draft = await buildNext(clone(entry.composition));
+        const next = normalizeComposition(draft, new Set(entry.assets.keys()));
         validateCompositionComplexity(next, entry.assets);
         const nextHistory = createHistory(entry.history, entry.history.limit);
         const changed = recordHistory(nextHistory, entry.composition, next);
         if (!changed && entry.composition) {
-            return entry.composition;
+            return {
+                composition: entry.composition,
+                history: entry.history,
+                changedLayerIds: [],
+            };
         }
+        const changedIds = changedLayerIds(entry.composition, next);
         next.revision = entry.composition.revision + 1;
         await persistCompositionState(next, nextHistory);
         for (const target of workspaceEntries(entry)) {
@@ -1090,8 +1371,82 @@ async function setComposition(entry, input) {
             target.history = createHistory(nextHistory, nextHistory.limit);
             broadcastCompositionState(target);
         }
-        return entry.composition;
+        return {
+            composition: entry.composition,
+            history: entry.history,
+            changedLayerIds: changedIds,
+        };
     });
+}
+
+async function setComposition(entry, input) {
+    const result = await commitComposition(entry, input.revision, () => input);
+    return result.composition;
+}
+
+async function createKpiPresentation(entry, input) {
+    const result = await commitComposition(entry, null, (current) => (
+        createKpiComposition(input, { revision: current.revision })
+    ));
+    return presentationMutationSummary(
+        result.composition,
+        persistedPresentationDetails(
+            entry,
+            result.composition,
+            result.history,
+            result.changedLayerIds,
+        ),
+    );
+}
+
+async function patchKpiPresentation(entry, input) {
+    let result;
+    try {
+        result = await commitComposition(entry, input.expectedRevision, (current) => (
+            patchKpiComposition(current, input)
+        ), { compactConflict: true });
+    } catch (error) {
+        if (error.code !== "semantic_drift") {
+            throw error;
+        }
+        const conflict = new CanvasError("semantic_drift", error.message);
+        conflict.current = {
+            revision: error.currentRevision,
+            warnings: error.warnings,
+        };
+        throw conflict;
+    }
+    return presentationMutationSummary(
+        result.composition,
+        persistedPresentationDetails(
+            entry,
+            result.composition,
+            result.history,
+            result.changedLayerIds,
+        ),
+    );
+}
+
+async function syncKpiPresentation(entry, input) {
+    const result = await commitComposition(entry, input.expectedRevision, (current) => (
+        syncKpiComposition(current, input)
+    ), { compactConflict: true });
+    return presentationMutationSummary(
+        result.composition,
+        persistedPresentationDetails(
+            entry,
+            result.composition,
+            result.history,
+            result.changedLayerIds,
+        ),
+    );
+}
+
+function getSceneSummary(entry) {
+    return presentationSummary(
+        entry.composition,
+        persistedPresentationDetails(entry, entry.composition, entry.history),
+    );
 }
 
 async function undoComposition(entry) {
@@ -1494,7 +1849,7 @@ const serverLifecycle = new InstanceLifecycle({
 const canvas = createCanvas({
     id: "fourier-runtime-canvas",
     displayName: "Fourier Runtime Canvas",
-    description: "Draws, transforms, persists, and animates frequency-only Fourier path assets alongside live sine-series signals.",
+    description: "Creates compact semantic presentations and hybrid scenes alongside frequency-only Fourier path assets and live sine-series signals.",
     inputSchema: SERIES_SCHEMA,
     actions: [
         {
@@ -1589,8 +1944,73 @@ const canvas = createCanvas({
             },
         },
         {
+            name: "create_kpi_presentation",
+            description: "Compact semantic action: create a responsive native text, threshold, and shared-scale bar presentation without Fourier assets or coefficient payloads.",
+            inputSchema: KPI_CREATE_SCHEMA,
+            handler: async (ctx) => {
+                const entry = servers.get(ctx.instanceId);
+                if (!entry) {
+                    throw new CanvasError("instance_not_open", "The canvas instance is not open.");
+                }
+                try {
+                    return await createKpiPresentation(entry, ctx.input);
+                } catch (error) {
+                    throw new CanvasError("invalid_kpi_presentation", error.message);
+                }
+            },
+        },
+        {
+            name: "patch_kpi_presentation",
+            description: "Compact semantic action: atomically patch KPI title, values, order, palette, timing, threshold, emphasis, or audio using an expected revision.",
+            inputSchema: KPI_PATCH_SCHEMA,
+            handler: async (ctx) => {
+                const entry = servers.get(ctx.instanceId);
+                if (!entry) {
+                    throw new CanvasError("instance_not_open", "The canvas instance is not open.");
+                }
+                try {
+                    return await patchKpiPresentation(entry, ctx.input);
+                } catch (error) {
+                    if (["stale_revision", "semantic_drift"].includes(error.code)) {
+                        throw error;
+                    }
+                    throw new CanvasError("invalid_kpi_patch", error.message);
+                }
+            },
+        },
+        {
+            name: "sync_kpi_presentation",
+            description: "Explicit reconciliation action: derive supported KPI metadata from low-level owned semantic layer edits, rebuild those layers canonically, and preserve a history snapshot.",
+            inputSchema: KPI_SYNC_SCHEMA,
+            handler: async (ctx) => {
+                const entry = servers.get(ctx.instanceId);
+                if (!entry) {
+                    throw new CanvasError("instance_not_open", "The canvas instance is not open.");
+                }
+                try {
+                    return await syncKpiPresentation(entry, ctx.input);
+                } catch (error) {
+                    if (error.code === "stale_revision") {
+                        throw error;
+                    }
+                    throw new CanvasError("invalid_kpi_reconciliation", error.message);
+                }
+            },
+        },
+        {
+            name: "get_scene_summary",
+            description: "Compact read action: get semantic scene metadata, active layer names and types, revision, artifact byte counts, and warnings without full state or coefficients.",
+            handler: (ctx) => {
+                const entry = servers.get(ctx.instanceId);
+                if (!entry) {
+                    throw new CanvasError("instance_not_open", "The canvas instance is not open.");
+                }
+                return getSceneSummary(entry);
+            },
+        },
+        {
             name: "get_composition",
-            description: "Get the layered Fourier composition, including timing and transform keyframes.",
+            description: "Advanced low-level action: get the full hybrid composition, including semantic content and Fourier timing/keyframes.",
             handler: (ctx) => {
                 const entry = servers.get(ctx.instanceId);
                 if (!entry) {
@@ -1601,7 +2021,7 @@ const canvas = createCanvas({
         },
         {
             name: "update_composition",
-            description: "Replace the layered Fourier composition and persist its timeline keyframes.",
+            description: "Advanced low-level action: replace the full hybrid composition and persist semantic layers plus Fourier timeline keyframes.",
             inputSchema: COMPOSITION_SCHEMA,
             handler: async (ctx) => {
                 const entry = servers.get(ctx.instanceId);

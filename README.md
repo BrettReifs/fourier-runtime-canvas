@@ -1,13 +1,13 @@
 # Fourier Runtime Canvas
 
-Fourier Runtime Canvas is an experimental GitHub Copilot canvas that treats a
-drawn path as a temporary input, not a permanent artifact. It resamples the
-path, computes complex Fourier coefficients, discards the source points, and
-uses the retained frequencies to reconstruct, layer, keyframe, morph, animate,
-and sonify the result at runtime.
+Fourier Runtime Canvas is a GitHub Copilot canvas for compact semantic
+presentations and frequency-domain path animation. It renders text, KPI bars,
+axes, and thresholds natively in Canvas 2D while retaining Fourier coefficients
+for paths that benefit from spectral reconstruction.
 
-The project explores whether frequency-domain assets can provide a compact,
-agent-addressable representation for motion graphics and explanatory visuals.
+The project explores whether semantic scene operations plus frequency-domain
+assets can provide a compact, agent-addressable representation for motion
+graphics and explanatory visuals.
 Coefficient-only files may reduce file and context overhead compared with
 retaining source paths plus rendered media, but this repository does not claim
 token, storage, latency, or cost savings. Those outcomes need representative
@@ -19,8 +19,12 @@ benchmarks.
 
 The canvas has three connected workspaces. **Create** captures one or more
 temporary pointer strokes and transforms them into `fourier-path/v1` assets.
-**Compose & animate** layers those assets on a timeline with transform,
-opacity, reveal, shape-morph, procedural-motion, and audio-cue settings.
+**Compose & animate** combines native semantic presentation layers with Fourier
+assets on one timeline. Semantic scenes provide upright text, a shared chart
+scale, aligned thresholds, explicit palettes, safe areas, responsive aspect
+ratios, deterministic entry animation, accessible summaries, and synthesized
+audio cues. Fourier layers retain transform, opacity, reveal, shape-morph,
+procedural-motion, and spectral-audio settings.
 **Signal runtime** visualizes live sine-series inputs and exposes a loopback
 script bridge.
 
@@ -58,7 +62,8 @@ separate from the transport and renderer.
 | --- | --- |
 | `extension.mjs` | Copilot actions, schemas, loopback HTTP/SSE, persistence, lifecycle |
 | `fourier.mjs` | Path validation, normalization, resampling, DFT, coefficient selection |
-| `composition.mjs` | Layer, keyframe, morph-target, motion, and audio normalization |
+| `composition.mjs` | Hybrid semantic/Fourier layer, keyframe, motion, audio, and aggregate-limit normalization |
+| `presentation.mjs` | Typed KPI creation and patching, compact summaries, and responsive layout math |
 | `history.mjs` | Bounded semantic undo and redo snapshots |
 | `renderer.mjs` | Interactive browser UI, reconstruction, animation, Web Audio |
 | `security.mjs` | Capability checks, exact loopback request policy, CSP generation |
@@ -71,6 +76,8 @@ separate from the transport and renderer.
 | Drawing | Multi-stroke input, open or closed paths, configurable coefficient limits |
 | Frequency assets | Normalized complex coefficients with no retained source points |
 | Composition | Up to 64 layers and 128 keyframes per layer |
+| Semantic presentation | Native text, shared-scale KPI bars, axes, thresholds, safe areas, and explicit palettes |
+| Responsive layout | Persisted 16:9, 4:3, or 9:16 scene fitted safely into wide and narrow viewports |
 | Animation | Position, scale, rotation, opacity, reveal, easing, timeline playback |
 | Morphing | Complex-coefficient interpolation between assets selected at keyframes |
 | Motion | Optional procedural line movement that does not alter stored coefficients |
@@ -120,9 +127,35 @@ target.
 
 ## Agent actions
 
-The extension exposes actions for series control, path transformation, asset
-loading and inspection, composition editing, history, and bridge discovery.
-For example, an agent can create a frequency-only asset:
+The preferred presentation actions are compact and semantic:
+
+| Action | Purpose | Response |
+| --- | --- | --- |
+| `create_kpi_presentation` | Create native text, bar-chart, axis, and optional threshold layers from a typed KPI spec | Revision, changed layer IDs/count, warnings, persisted byte counts |
+| `patch_kpi_presentation` | Apply revision-bound title, value, order, palette, timing, emphasis, threshold, or audio deltas | Compact diff summary only |
+| `sync_kpi_presentation` | Explicitly reconcile supported low-level edits into canonical KPI metadata and owned layers | Compact diff summary only |
+| `get_scene_summary` | Inspect semantic metadata, active layer names/types, and artifact counts/bytes | Compact scene summary only |
+
+These actions never return coefficient arrays or the full composition.
+`patch_kpi_presentation` uses the same serialized queue, revision check, bounded
+history, and atomic workspace-state write as low-level composition changes. A
+semantic-only patch does not create or update files in `fourier-assets/`.
+
+Presentation metadata stores a SHA-256 fingerprint of the deterministic title,
+bar-chart, and threshold layers. The compact patch recomputes it inside the
+workspace mutation queue. If a low-level edit changed an owned semantic layer,
+the patch fails with `semantic_drift`, the current revision, and a compact
+warning instead of overwriting that edit. `sync_kpi_presentation` accepts an
+`expectedRevision`, derives supported title, values, scale, axis, threshold,
+entry, emphasis, palette colors, and audio settings from the owned layers, then
+rebuilds those layers canonically through the same history and atomic
+persistence path. Fourier overlay changes are outside the fingerprint and do
+not trigger drift.
+
+The lower-level actions remain available for advanced path work.
+`transform_drawing`, `load_frequency_asset`, `get_frequency_asset`,
+`get_composition`, and `update_composition` operate on full Fourier assets or
+the complete hybrid composition. For example:
 
 ```json
 {
@@ -148,7 +181,7 @@ For example, an agent can create a frequency-only asset:
 }
 ```
 
-The response is a `fourier-path/v1` object containing frequency, amplitude,
+The low-level response is a `fourier-path/v1` object containing frequency, amplitude,
 and phase values. `get_frequency_asset`, `list_frequency_assets`,
 `load_frequency_asset`, `get_composition`, `update_composition`,
 `undo_composition`, `redo_composition`, and `get_bridge_info` support the rest
@@ -201,8 +234,9 @@ Invoke-RestMethod -Method Post `
 Raw pointer coordinates exist in the browser only while a drawing is being
 edited and while its transform request is processed. After a successful
 transform, the browser clears those points. The extension persists
-coefficient assets under `fourier-assets/` and compositions plus history under
-`fourier-compositions/` inside the active Copilot workspace.
+coefficient assets under `fourier-assets/` and hybrid compositions plus history
+under `fourier-compositions/` inside the active Copilot workspace. Semantic
+layers are composition data and do not create frequency asset files.
 
 The extension binds HTTP only to loopback and creates a cryptographically
 random capability for each canvas instance. It also requires an exact loopback
@@ -230,7 +264,8 @@ directory and reported through `/api/info`.
 
 Compositions accept at most 64 layers, 128 keyframes per layer, 1,024
 keyframes in total, 8,192 active scene coefficients, 256 active strokes, and a
-300-second duration. Asset playback duration is limited to 60 seconds. The
+300-second duration. KPI presentations accept at most 32 values and 2,048
+semantic text characters in aggregate. Asset playback duration is limited to 60 seconds. The
 renderer shares a 12,000-sample frame budget across visible layers and builds
 morph frequency maps once per stroke rather than once per sample. Coordinates,
 imported frequency bins, coefficient amplitudes, phases, and live-series
@@ -250,7 +285,7 @@ future option if measured workloads require larger budgets.
 
 ## Exploration directions
 
-Engineering work should start with benchmarks: compare coefficient assets
+Engineering work should start with benchmarks: compare semantic actions and coefficient assets
 against representative SVG paths, animation JSON, and raster/video outputs
 for file size, reconstruction error, render time, and agent-context cost.
 Other useful investigations include FFT-based transforms, adaptive term
@@ -263,6 +298,10 @@ explainers, lightweight kinetic brand systems, procedural data stories, and
 reusable motion primitives for developer tools. Any claim about lower cost or
 smaller context should remain a hypothesis until a public benchmark and
 workload methodology exist.
+
+The current semantic-layer hypothesis and the workload-specific pilot evidence
+are documented in
+[docs/semantic-presentation-benchmark.md](docs/semantic-presentation-benchmark.md).
 
 ## Contribution status
 

@@ -1,3 +1,17 @@
+export function audioCueCrossed(
+  trigger,
+  previousTime,
+  nextTime,
+  wrapped = false,
+  includeStart = false
+) {
+  if (![trigger, previousTime, nextTime].every(Number.isFinite)) return false;
+  if (includeStart && trigger === previousTime) return true;
+  return wrapped
+    ? trigger > previousTime || trigger <= nextTime
+    : trigger > previousTime && trigger <= nextTime;
+}
+
 export function renderHtml(nonce) {
     return `<!doctype html>
 <html lang="en">
@@ -117,6 +131,17 @@ export function renderHtml(nonce) {
       color: var(--text-color-muted, #8b949e);
       font-size: 12px;
       pointer-events: none;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
     .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(270px, 1fr); gap: 14px; }
     .side { display: grid; align-content: start; gap: 14px; }
@@ -485,9 +510,10 @@ export function renderHtml(nonce) {
     </section>
 
     <section id="asset-view" class="view" role="tabpanel" hidden>
-      <section class="panel plot-wrap" aria-label="Layered Fourier composition">
-        <span class="plot-label">Layered inverse Fourier composition</span>
-        <canvas id="asset-canvas">Preview the layered Fourier composition and its animation timeline.</canvas>
+      <section class="panel plot-wrap" aria-label="Hybrid semantic and Fourier composition">
+        <span class="plot-label" id="composition-view-label">Hybrid semantic and Fourier composition</span>
+        <canvas id="asset-canvas" aria-describedby="scene-summary">Preview the hybrid semantic and Fourier composition and its animation timeline.</canvas>
+        <p id="scene-summary" class="sr-only" aria-live="polite">No active scene.</p>
       </section>
       <section class="panel timeline" style="margin-top:14px">
         <div class="controls">
@@ -495,6 +521,7 @@ export function renderHtml(nonce) {
           <button id="sound-toggle" type="button" aria-pressed="true">Sound on</button>
           <button id="undo-composition" type="button" title="Undo (Ctrl/Cmd+Z)" disabled>Undo</button>
           <button id="redo-composition" type="button" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>Redo</button>
+          <button id="restart-composition" type="button">Restart</button>
           <button id="static-final" type="button">Static final</button>
           <label>Time <input id="composition-time" type="range" min="0" max="8" step="0.01" value="0"></label>
           <output id="composition-time-value">0.00 / 8.00s</output>
@@ -580,7 +607,7 @@ export function renderHtml(nonce) {
               <button id="copy-asset" type="button" disabled>Copy JSON</button>
               <button id="download-asset" type="button" disabled>Download JSON</button>
             </div>
-            <p>Layers reference coefficient assets. Keyframes morph transforms, opacity, and ink reveal over time.</p>
+            <p>Semantic layers render native text and charts. Fourier layers reference coefficient assets for advanced path animation.</p>
           </section>
         </aside>
       </div>
@@ -654,6 +681,7 @@ export function renderHtml(nonce) {
   </div>
 
   <script nonce="${nonce}">
+   ${audioCueCrossed.toString()}
    const capabilityToken = new URLSearchParams(location.search).get("token");
    if (!capabilityToken) throw new Error("Canvas capability is missing.");
    history.replaceState(null, "", location.pathname);
@@ -1095,6 +1123,296 @@ export function renderHtml(nonce) {
       return value;
     }
 
+    function presentationLayout(width, height) {
+      const presentation = state.composition?.presentation;
+      if (!presentation) return null;
+      const ratios = { "16:9": 16 / 9, "4:3": 4 / 3, "9:16": 9 / 16 };
+      const ratio = ratios[presentation.aspectRatio] ?? 16 / 9;
+      const sceneWidth = Math.min(width, height * ratio);
+      const sceneHeight = sceneWidth / ratio;
+      const scene = {
+        left: (width - sceneWidth) / 2,
+        top: (height - sceneHeight) / 2,
+        width: sceneWidth,
+        height: sceneHeight,
+      };
+      const inset = Math.max(8, Math.min(sceneWidth, sceneHeight) * presentation.safeArea);
+      const safe = {
+        left: scene.left + inset,
+        top: scene.top + inset,
+        right: scene.left + scene.width - inset,
+        bottom: scene.top + scene.height - inset,
+      };
+      const titleHeight = Math.max(32, sceneHeight * 0.14);
+      const labelHeight = Math.max(28, sceneHeight * 0.1);
+      const axisWidth = Math.max(36, sceneWidth * 0.055);
+      const plot = {
+        left: safe.left + axisWidth,
+        top: safe.top + titleHeight,
+        width: Math.max(1, safe.right - safe.left - axisWidth),
+        height: Math.max(1, safe.bottom - safe.top - titleHeight - labelHeight),
+      };
+      const barsLayer = state.composition.layers.find(
+        (layer) => (
+          layer.id === state.composition.id + "-bars"
+          && layer.type === "bar-chart"
+        )
+      );
+      const values = barsLayer?.semantic.values ?? [];
+      const maxValue = barsLayer?.semantic.maxValue ?? 1;
+      const slotWidth = plot.width / Math.max(1, values.length);
+      const barWidth = slotWidth * (values.length > 16 ? 0.62 : 0.7);
+      const bars = values.map((value, index) => ({
+        left: plot.left + slotWidth * index + (slotWidth - barWidth) / 2,
+        width: barWidth,
+        center: plot.left + slotWidth * (index + 0.5),
+      }));
+      return {
+        scene,
+        safe,
+        plot,
+        bars,
+        maxValue,
+        valueScale(value) {
+          return Math.max(0, Math.min(maxValue, value)) / maxValue * plot.height;
+        },
+      };
+    }
+
+    function chartLayout(layout, semantic) {
+      const slotWidth = layout.plot.width / Math.max(1, semantic.values.length);
+      const barWidth = slotWidth * (semantic.values.length > 16 ? 0.62 : 0.7);
+      return {
+        ...layout,
+        bars: semantic.values.map((value, index) => ({
+          left: layout.plot.left + slotWidth * index + (slotWidth - barWidth) / 2,
+          width: barWidth,
+          center: layout.plot.left + slotWidth * (index + 0.5),
+        })),
+        maxValue: semantic.maxValue,
+        valueScale(value) {
+          return Math.max(0, Math.min(semantic.maxValue, value)) /
+            semantic.maxValue * layout.plot.height;
+        },
+      };
+    }
+
+    function semanticProgress(layer, itemIndex = 0) {
+      if (reduceMotion || state.staticFinal) return 1;
+      const animation = layer.animation;
+      if (!animation || animation.mode === "none") return 1;
+      const start = animation.start + animation.stagger * (
+        animation.staggerIndex + itemIndex
+      );
+      if (animation.duration <= 0) {
+        return state.compositionTime >= start ? 1 : 0;
+      }
+      const raw = Math.max(
+        0,
+        Math.min(1, (state.compositionTime - start) / animation.duration)
+      );
+      return easeValue(raw, animation.easing);
+    }
+
+    function shortLabel(context, label, maximumWidth) {
+      if (context.measureText(label).width <= maximumWidth) return label;
+      let result = label;
+      while (result.length > 1 && context.measureText(result + "...").width > maximumWidth) {
+        result = result.slice(0, -1);
+      }
+      return result + "...";
+    }
+
+    function drawSemanticText(context, layer, layout) {
+      const progress = semanticProgress(layer);
+      if (progress <= 0) return;
+      const semantic = layer.semantic;
+      const fontSize = Math.max(16, Math.min(54, layout.scene.height * 0.075));
+      const baseline = layout.safe.top + fontSize;
+      const rise = layer.animation.mode === "rise"
+        ? (1 - progress) * fontSize * 0.55
+        : 0;
+      context.save();
+      context.globalAlpha = progress;
+      context.fillStyle = semantic.color;
+      context.font = semantic.fontWeight + " " + fontSize + "px " + semantic.fontFamily;
+      context.textAlign = semantic.align;
+      context.textBaseline = "alphabetic";
+      const x = semantic.align === "center"
+        ? (layout.safe.left + layout.safe.right) / 2
+        : semantic.align === "right" ? layout.safe.right : layout.safe.left;
+      context.fillText(
+        shortLabel(context, semantic.text, layout.safe.right - layout.safe.left),
+        x,
+        baseline + rise
+      );
+      const metrics = context.measureText(semantic.text);
+      state.layerGeometry.set(layer.id, {
+        polylines: [],
+        hasClosedStroke: true,
+        bounds: {
+          left: semantic.align === "center" ? x - metrics.width / 2
+            : semantic.align === "right" ? x - metrics.width : x,
+          right: semantic.align === "center" ? x + metrics.width / 2
+            : semantic.align === "right" ? x : x + metrics.width,
+          top: baseline - fontSize + rise,
+          bottom: baseline + rise,
+        },
+      });
+      context.restore();
+    }
+
+    function drawSemanticBars(context, layer, layout) {
+      const semantic = layer.semantic;
+      const resolvedLayout = chartLayout(layout, semantic);
+      const palette = state.composition.presentation.palette;
+      const axis = semantic.axis;
+      context.save();
+      if (axis.show) {
+        context.strokeStyle = palette.axis;
+        context.fillStyle = palette.muted;
+        context.lineWidth = 1;
+        context.font = Math.max(9, layout.scene.height * 0.018) + "px Inter, sans-serif";
+        context.textAlign = "right";
+        context.textBaseline = "middle";
+        for (let index = 0; index <= axis.ticks; index += 1) {
+          const amount = index / axis.ticks;
+          const y = resolvedLayout.plot.top + resolvedLayout.plot.height * (1 - amount);
+          context.beginPath();
+          context.moveTo(resolvedLayout.plot.left, y);
+          context.lineTo(resolvedLayout.plot.left + resolvedLayout.plot.width, y);
+          context.stroke();
+          context.fillText(
+            String(Math.round(semantic.maxValue * amount * 100) / 100),
+            resolvedLayout.plot.left - 8,
+            y
+          );
+        }
+        if (axis.label) {
+          context.save();
+          context.translate(
+            resolvedLayout.safe.left,
+            resolvedLayout.plot.top + resolvedLayout.plot.height / 2
+          );
+          context.rotate(-Math.PI / 2);
+          context.textAlign = "center";
+          context.fillText(axis.label, 0, 0);
+          context.restore();
+        }
+      }
+      const highest = Math.max(...semantic.values.map((value) => value.value));
+      const threshold = state.composition.presentation.threshold;
+      const fontSize = Math.max(9, Math.min(15, layout.scene.height * 0.022));
+      const valueFontSize = Math.max(10, Math.min(18, layout.scene.height * 0.026));
+      const layerBounds = {
+        left: layout.plot.left,
+        right: layout.plot.left + layout.plot.width,
+        top: layout.plot.top,
+        bottom: layout.plot.top + layout.plot.height + fontSize * 2,
+      };
+      semantic.values.forEach((value, index) => {
+        const progress = semanticProgress(layer, index);
+        const bar = resolvedLayout.bars[index];
+        const barHeight = resolvedLayout.valueScale(value.value) * progress;
+        const top = resolvedLayout.plot.top + resolvedLayout.plot.height - barHeight;
+        const emphasized = (
+          layer.animation.emphasis.mode === "highest" && value.value === highest
+        ) || (
+          layer.animation.emphasis.mode === "threshold"
+          && threshold.show
+          && value.value >= threshold.value
+        );
+        const pulse = (
+          emphasized
+          && layer.animation.emphasis.pulse
+          && !reduceMotion
+          && !state.staticFinal
+        )
+          ? 0.92 + 0.08 * (0.5 + 0.5 * Math.sin(state.ambientTime * Math.PI * 4))
+          : 1;
+        const pulseWidth = bar.width * pulse;
+        const pulseLeft = bar.center - pulseWidth / 2;
+        context.globalAlpha = progress;
+        context.fillStyle = value.color;
+        context.fillRect(pulseLeft, top, pulseWidth, barHeight);
+        if (emphasized) {
+          context.strokeStyle = palette.text;
+          context.lineWidth = Math.max(1, layout.scene.height * 0.004);
+          context.strokeRect(pulseLeft, top, pulseWidth, barHeight);
+        }
+        context.globalAlpha = Math.max(0.25, progress);
+        context.fillStyle = palette.text;
+        context.font = "600 " + valueFontSize + "px Inter, sans-serif";
+        context.textAlign = "center";
+        context.textBaseline = "bottom";
+        context.fillText(
+          String(value.value),
+          bar.center,
+          Math.max(layout.plot.top + valueFontSize, top - 5)
+        );
+        context.fillStyle = palette.muted;
+        context.font = fontSize + "px Inter, sans-serif";
+        context.textBaseline = "top";
+        context.fillText(
+          shortLabel(context, value.label, Math.max(12, bar.width * 1.25)),
+          bar.center,
+          layout.plot.top + layout.plot.height + 8
+        );
+      });
+      state.layerGeometry.set(layer.id, {
+        polylines: [],
+        hasClosedStroke: true,
+        bounds: layerBounds,
+      });
+      context.restore();
+    }
+
+    function drawSemanticLine(context, layer, layout) {
+      const progress = semanticProgress(layer);
+      if (progress <= 0) return;
+      const semantic = layer.semantic;
+      const y = layout.plot.top + layout.plot.height - layout.valueScale(semantic.value);
+      const right = layout.plot.left + layout.plot.width * progress;
+      context.save();
+      context.globalAlpha = progress;
+      context.strokeStyle = semantic.color;
+      context.fillStyle = semantic.color;
+      context.lineWidth = semantic.width;
+      context.setLineDash(semantic.style === "dashed" ? [8, 6] : []);
+      context.beginPath();
+      context.moveTo(layout.plot.left, y);
+      context.lineTo(right, y);
+      context.stroke();
+      context.setLineDash([]);
+      if (semantic.label) {
+        context.font = "600 " + Math.max(10, layout.scene.height * 0.02) +
+          "px Inter, sans-serif";
+        context.textAlign = "right";
+        context.textBaseline = "bottom";
+        context.fillText(semantic.label, layout.plot.left + layout.plot.width, y - 5);
+      }
+      state.layerGeometry.set(layer.id, {
+        polylines: [[
+          { x: layout.plot.left, y },
+          { x: right, y },
+        ]],
+        hasClosedStroke: false,
+        bounds: {
+          left: layout.plot.left,
+          right,
+          top: y - 8,
+          bottom: y + 8,
+        },
+      });
+      context.restore();
+    }
+
+    function drawSemanticLayer(context, layer, layout) {
+      if (layer.type === "text") drawSemanticText(context, layer, layout);
+      if (layer.type === "bar-chart") drawSemanticBars(context, layer, layout);
+      if (layer.type === "line") drawSemanticLine(context, layer, layout);
+    }
+
     function evaluateLayer(layer, time) {
       const defaults = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, reveal: 1 };
       if (!layer.keyframes.length) return defaults;
@@ -1132,7 +1450,7 @@ export function renderHtml(nonce) {
       };
     }
 
-    function mapAssetPoint(point, width, height, transform) {
+    function mapAssetPoint(point, width, height, transform, originX = 0, originY = 0) {
       const angle = transform.rotation * Math.PI / 180;
       const cosine = Math.cos(angle);
       const sine = Math.sin(angle);
@@ -1142,12 +1460,21 @@ export function renderHtml(nonce) {
       };
       const scale = Math.min(width, height) * 0.31;
       return {
-        x: width / 2 + transform.x * width * 0.35 + rotated.x * scale,
-        y: height / 2 + transform.y * height * 0.35 + rotated.y * scale,
+        x: originX + width / 2 + transform.x * width * 0.35 + rotated.x * scale,
+        y: originY + height / 2 + transform.y * height * 0.35 + rotated.y * scale,
       };
     }
 
-    function drawEpicycles(context, stroke, time, width, height, transform) {
+    function drawEpicycles(
+      context,
+      stroke,
+      time,
+      width,
+      height,
+      transform,
+      originX = 0,
+      originY = 0
+    ) {
       if (!document.querySelector("#show-epicycles").checked) return;
       let point = { x: 0, y: 0 };
       context.lineWidth = 1;
@@ -1157,8 +1484,8 @@ export function renderHtml(nonce) {
           x: point.x + coefficient.amplitude * Math.cos(angle),
           y: point.y + coefficient.amplitude * Math.sin(angle),
         };
-        const mapped = mapAssetPoint(point, width, height, transform);
-        const mappedNext = mapAssetPoint(next, width, height, transform);
+        const mapped = mapAssetPoint(point, width, height, transform, originX, originY);
+        const mappedNext = mapAssetPoint(next, width, height, transform, originX, originY);
         context.strokeStyle = token("--grid", "#30363d");
         context.beginPath();
         context.arc(
@@ -1186,7 +1513,9 @@ export function renderHtml(nonce) {
       height,
       transform,
       sampleBudget,
-      operationBudget
+      operationBudget,
+      originX = 0,
+      originY = 0
     ) {
       const morphAmount = transform.morph?.amount ?? 0;
       const strokeCount = Math.max(sourceAsset.strokes.length, targetAsset.strokes.length);
@@ -1230,7 +1559,9 @@ export function renderHtml(nonce) {
             ),
             width,
             height,
-            transform
+            transform,
+            originX,
+            originY
           ));
         }
         return points;
@@ -1280,6 +1611,15 @@ export function renderHtml(nonce) {
               return layer;
             }
           }
+        }
+        if (
+          layer.type !== "fourier"
+          && point.x >= geometry.bounds.left
+          && point.x <= geometry.bounds.right
+          && point.y >= geometry.bounds.top
+          && point.y <= geometry.bounds.bottom
+        ) {
+          return layer;
         }
       }
       return layers.find((layer) => {
@@ -1335,7 +1675,28 @@ export function renderHtml(nonce) {
       const width = rect.width;
       const height = rect.height;
       contexts.asset.clearRect(0, 0, width, height);
-      drawGrid(contexts.asset, width, height);
+      const layout = presentationLayout(width, height);
+      if (layout) {
+        const palette = state.composition.presentation.palette;
+        contexts.asset.fillStyle = token("--background-color-default", "#0d1117");
+        contexts.asset.fillRect(0, 0, width, height);
+        contexts.asset.fillStyle = palette.background;
+        contexts.asset.fillRect(
+          layout.scene.left,
+          layout.scene.top,
+          layout.scene.width,
+          layout.scene.height
+        );
+        contexts.asset.fillStyle = palette.surface;
+        contexts.asset.fillRect(
+          layout.plot.left,
+          layout.plot.top,
+          layout.plot.width,
+          layout.plot.height
+        );
+      } else {
+        drawGrid(contexts.asset, width, height);
+      }
       state.layerGeometry.clear();
       if (!state.composition || !state.composition.layers.length) {
         contexts.asset.fillStyle = token("--text-color-muted", "#8b949e");
@@ -1361,7 +1722,17 @@ export function renderHtml(nonce) {
         Math.floor(500000 / Math.max(1, layers.length))
       );
       layers.forEach((layer, layerIndex) => {
+        if (layer.type !== "fourier") {
+          if (layout) drawSemanticLayer(contexts.asset, layer, layout);
+          return;
+        }
         const transform = evaluateLayer(layer, state.compositionTime);
+        const fourierFrame = layout?.scene ?? {
+          left: 0,
+          top: 0,
+          width,
+          height,
+        };
         const sourceAsset = state.assets.get(
           transform.morph?.fromAssetId ?? layer.assetId
         );
@@ -1382,11 +1753,13 @@ export function renderHtml(nonce) {
           layer,
           sourceAsset,
           targetAsset,
-          width,
-          height,
+          fourierFrame.width,
+          fourierFrame.height,
           transform,
           perLayerSampleBudget,
-          perLayerOperationBudget
+          perLayerOperationBudget,
+          fourierFrame.left,
+          fourierFrame.top
         );
         state.layerGeometry.set(layer.id, geometry);
         for (const polyline of geometry.polylines) {
@@ -1406,9 +1779,11 @@ export function renderHtml(nonce) {
             contexts.asset,
             stroke,
             (stroke.closed ? 1 : 0.5) * transform.reveal,
-            width,
-            height,
-            transform
+            fourierFrame.width,
+            fourierFrame.height,
+            transform,
+            fourierFrame.left,
+            fourierFrame.top
           );
         }
         contexts.asset.restore();
@@ -1615,10 +1990,13 @@ export function renderHtml(nonce) {
       }
       const transform = evaluateLayer(layer, audio.triggerTime);
       const asset = state.assets.get(transform.assetId ?? layer.assetId);
-      if (!asset) return;
+      const partials = asset
+        ? spectralPartials(asset, audio.partialCount)
+        : layer.type !== "fourier" ? [{ ratio: 1, weight: 1 }] : [];
+      if (!partials.length) return;
       const now = context.currentTime;
       const duration = audio.duration;
-      for (const partial of spectralPartials(asset, audio.partialCount)) {
+      for (const partial of partials) {
         const oscillator = context.createOscillator();
         const envelope = context.createGain();
         const frequency = Math.min(4000, audio.baseFrequency * partial.ratio);
@@ -1640,15 +2018,19 @@ export function renderHtml(nonce) {
       }
     }
 
-    function triggerAudioCues(previousTime, nextTime, wrapped) {
+    function triggerAudioCues(previousTime, nextTime, wrapped, includeStart = false) {
       if (!state.soundEnabled || !state.audioContext) return;
       const layers = state.composition?.layers ?? [];
       for (const layer of layers) {
         if (!layer.audio?.enabled) continue;
         const trigger = layer.audio.triggerTime;
-        const crossed = wrapped
-          ? trigger > previousTime || trigger <= nextTime
-          : trigger > previousTime && trigger <= nextTime;
+        const crossed = audioCueCrossed(
+          trigger,
+          previousTime,
+          nextTime,
+          wrapped,
+          includeStart
+        );
         if (crossed) playLayerCue(layer);
       }
     }
@@ -1694,10 +2076,16 @@ export function renderHtml(nonce) {
       state.motionPreviews.clear();
       state.audioPreviews.clear();
       state.compositionTime = Math.min(state.compositionTime, composition.duration);
-      const assetIds = new Set(composition.layers.flatMap((layer) => [
-        layer.assetId,
-        ...layer.keyframes.map((keyframe) => keyframe.assetId ?? layer.assetId),
-      ]));
+      const assetIds = new Set(
+        composition.layers.flatMap((layer) => (
+          layer.type === "fourier"
+            ? [
+                layer.assetId,
+                ...layer.keyframes.map((keyframe) => keyframe.assetId ?? layer.assetId),
+              ]
+            : []
+        )).filter(Boolean)
+      );
       await Promise.all([...assetIds].map(loadAssetById));
       if (
         !state.selectedLayerId
@@ -1706,9 +2094,28 @@ export function renderHtml(nonce) {
         state.selectedLayerId = composition.layers[0]?.id ?? null;
       }
       document.querySelector("#asset-title").textContent = composition.name;
+      const semanticSummary = composition.presentation?.accessibleSummary;
+      document.querySelector("#scene-summary").textContent =
+        semanticSummary ?? (
+          composition.name + ". " + composition.layers.length + " active layers."
+        );
+      document.querySelector("#asset-canvas").setAttribute(
+        "aria-label",
+        semanticSummary
+          ? "Semantic KPI presentation: " + composition.presentation.title
+          : "Layered Fourier composition"
+      );
+      document.querySelector("#composition-view-label").textContent =
+        composition.presentation
+          ? "Responsive semantic presentation" +
+            (composition.layers.some((layer) => layer.type === "fourier")
+              ? " with Fourier overlays"
+              : "")
+          : "Layered inverse Fourier composition";
       document.querySelector("#asset-strokes").textContent = composition.layers.length;
       document.querySelector("#asset-terms").textContent = composition.layers.reduce(
         (sum, layer) => {
+          if (layer.type !== "fourier") return sum;
           const asset = state.assets.get(layer.assetId);
           return sum + (asset?.strokes.reduce(
             (assetSum, stroke) => assetSum + stroke.coefficients.length,
@@ -1894,6 +2301,26 @@ export function renderHtml(nonce) {
       document.querySelector("#layer-empty").hidden = Boolean(layer);
       document.querySelector("#layer-editor").hidden = !layer;
       if (!layer) return;
+      const isFourierLayer = layer.type === "fourier";
+      for (const id of [
+        "key-shape",
+        "key-x",
+        "key-y",
+        "key-scale",
+        "key-rotation",
+        "key-opacity",
+        "key-reveal",
+        "key-easing",
+        "save-keyframe",
+        "remove-keyframe",
+        "motion-enabled",
+        "motion-amount",
+        "motion-speed",
+        "motion-detail",
+        "save-motion",
+      ]) {
+        document.querySelector("#" + id).disabled = !isFourierLayer;
+      }
       const value = evaluateLayer(layer, state.compositionTime);
       const sourceName = state.assetSummaries.find(
         (summary) => summary.id === value.morph?.fromAssetId
@@ -1917,24 +2344,27 @@ export function renderHtml(nonce) {
       document.querySelector("#key-opacity").value = value.opacity.toFixed(3);
       document.querySelector("#key-reveal").value = value.reveal.toFixed(3);
       document.querySelector("#key-easing").value = value.easing ?? "ease-in-out";
-      document.querySelector("#key-shape").value = value.assetId ?? layer.assetId;
+      document.querySelector("#key-shape").value = value.assetId ?? layer.assetId ?? "";
       const motion = state.motionPreviews.get(layer.id) ?? layer.motion;
       const audio = state.audioPreviews.get(layer.id) ?? layer.audio;
       document.querySelector("#motion-enabled").checked = motion?.enabled === true;
       document.querySelector("#motion-amount").value = motion?.amount ?? 0;
       document.querySelector("#motion-speed").value = motion?.speed ?? 0.35;
       document.querySelector("#motion-detail").value = motion?.detail ?? 3;
-      document.querySelector("#motion-status").textContent = reduceMotion
-        ? "System reduced motion is active, so procedural motion is disabled."
-        : "Changes preview live on " + layer.name + "; save to keep them.";
+      document.querySelector("#motion-status").textContent = !isFourierLayer
+        ? "Semantic animation is deterministic and editable through compact KPI patches."
+        : reduceMotion
+          ? "System reduced motion is active, so procedural motion is disabled."
+          : "Changes preview live on " + layer.name + "; save to keep them.";
       document.querySelector("#audio-enabled").checked = audio?.enabled === true;
       document.querySelector("#audio-trigger").value = audio?.triggerTime ?? layer.start;
       document.querySelector("#audio-frequency").value = audio?.baseFrequency ?? 220;
       document.querySelector("#audio-gain").value = audio?.gain ?? 0.045;
       document.querySelector("#audio-duration").value = audio?.duration ?? 0.18;
       document.querySelector("#audio-partials").value = audio?.partialCount ?? 5;
-      document.querySelector("#audio-status").textContent =
-        "The strongest stored frequencies shape " + layer.name + "’s sine cue.";
+      document.querySelector("#audio-status").textContent = isFourierLayer
+        ? "The strongest stored frequencies shape " + layer.name + "’s sine cue."
+        : "This semantic layer uses a bounded synthesized sine cue.";
       const hasKeyframe = layer.keyframes.some(
         (keyframe) => Math.abs(keyframe.time - state.compositionTime) < 0.005
       );
@@ -2296,7 +2726,7 @@ export function renderHtml(nonce) {
       };
       const offset = offsets[event.key];
       const layer = selectedLayer();
-      if (!offset || !layer) return;
+      if (!offset || !layer || layer.type !== "fourier") return;
       event.preventDefault();
       const step = event.shiftKey ? 0.05 : 0.01;
       const keyframe = positionKeyframeAtPlayhead(layer);
@@ -2344,7 +2774,7 @@ export function renderHtml(nonce) {
       renderTimeline();
       syncLayerEditor();
       drawAsset();
-      if (!layer) return;
+      if (!layer || layer.type !== "fourier") return;
 
       state.compositionPlaying = false;
       document.querySelector("#asset-play").textContent = "Play";
@@ -2363,7 +2793,10 @@ export function renderHtml(nonce) {
     canvases.asset.addEventListener("pointermove", (event) => {
       const point = assetPointerPoint(event);
       if (!state.dragLayer) {
-        canvases.asset.classList.toggle("layer-target", Boolean(hitTestLayer(point)));
+        canvases.asset.classList.toggle(
+          "layer-target",
+          hitTestLayer(point)?.type === "fourier"
+        );
         return;
       }
       const drag = state.dragLayer;
@@ -2432,15 +2865,21 @@ export function renderHtml(nonce) {
     document.querySelector("#asset-play").addEventListener("click", async (event) => {
       state.compositionPlaying = !state.compositionPlaying;
       state.staticFinal = false;
-      if (state.compositionPlaying && state.soundEnabled) {
-        await ensureAudio();
-      }
       if (
         state.compositionPlaying
         && state.composition
         && state.compositionTime >= state.composition.duration
       ) {
         setCompositionTime(0);
+      }
+      const startsAtZero = (
+        state.compositionPlaying
+        && state.composition
+        && state.compositionTime === 0
+      );
+      if (state.compositionPlaying && state.soundEnabled) {
+        await ensureAudio();
+        if (startsAtZero) triggerAudioCues(0, 0, false, true);
       }
       event.currentTarget.textContent = state.compositionPlaying ? "Pause" : "Play";
     });
@@ -2458,6 +2897,17 @@ export function renderHtml(nonce) {
       "click",
       redoCompositionChange
     );
+    document.querySelector("#restart-composition").addEventListener("click", async () => {
+      if (!state.composition) return;
+      state.compositionPlaying = false;
+      state.staticFinal = false;
+      document.querySelector("#asset-play").textContent = "Play";
+      setCompositionTime(0);
+      if (state.soundEnabled) {
+        await ensureAudio();
+        triggerAudioCues(0, 0, false, true);
+      }
+    });
     document.querySelector("#static-final").addEventListener("click", () => {
       if (!state.composition) return;
       state.compositionPlaying = false;
@@ -2564,6 +3014,7 @@ export function renderHtml(nonce) {
 
     window.addEventListener("resize", () => {
       drawInput();
+      drawAsset();
       renderTimeline();
       drawSeriesSpectrum();
       positionTour();

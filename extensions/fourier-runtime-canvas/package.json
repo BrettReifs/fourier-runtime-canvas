@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "main": "extension.mjs",
-  "description": "Draw, animate, morph, and sonify frequency-only Fourier path assets in a GitHub Copilot canvas.",
+  "description": "Create semantic KPI presentations and animate frequency-only Fourier paths in a GitHub Copilot canvas.",
   "keywords": [
     "copilot-canvas",
     "fourier",

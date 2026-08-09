@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Frequency-domain runtime canvas for drawing, composing, animating, morphing, and sonifying Fourier path assets.",
+  "description": "Semantic presentation runtime and frequency-domain canvas for responsive hybrid animation.",
   "scripts": {
     "test": "node --test",
     "syntax": "node scripts/check-syntax.mjs",
