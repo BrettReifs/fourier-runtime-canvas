@@ -1,0 +1,254 @@
+{
+  "schemaVersion": 1,
+  "pilotId": "pilot-01",
+  "task": "VS Code architecture dashboard build and revision",
+  "measurementNotes": {
+    "summedInputTokens": "Summed input tokens double-count accumulated context across model calls and should be interpreted as model processing, not unique input.",
+    "peakContextTokens": "Peak context tokens are the clearer context-growth metric.",
+    "artifacts": "Total artifacts include retained superseded files. Active portable payload is reported separately when known.",
+    "quality": "No numeric human score was recorded in the pilot. Pass/fail reflects screenshot review against the minimum presentation gate."
+  },
+  "runs": [
+    {
+      "id": "html-svg",
+      "name": "HTML/SVG",
+      "model": "GPT-5.6 Sol",
+      "reasoningEffort": "high",
+      "creation": {
+        "elapsedSeconds": 248.3,
+        "modelCalls": 17,
+        "summedInputTokens": 738721,
+        "peakContextTokens": 47180,
+        "outputTokens": 8329,
+        "modelDurationMs": 165346,
+        "nanoAiu": 89072775000,
+        "toolCalls": 27,
+        "artifacts": {
+          "total": {
+            "fileCount": 1,
+            "bytes": 12622
+          },
+          "details": {
+            "htmlFiles": 1,
+            "svgElements": 55
+          }
+        },
+        "quality": {
+          "pass": true,
+          "humanScore": null,
+          "observations": [
+            "Screenshot review clearly passed the minimum presentation gate."
+          ]
+        }
+      },
+      "revision": {
+        "elapsedSeconds": 154.32,
+        "modelCalls": 11,
+        "summedInputTokens": 624057,
+        "peakContextTokens": 60111,
+        "outputTokens": 6769,
+        "modelDurationMs": 108273,
+        "nanoAiu": 58960025000,
+        "toolCalls": 17,
+        "artifacts": {
+          "total": {
+            "fileCount": 1,
+            "bytes": 13515
+          },
+          "details": {
+            "htmlFiles": 1,
+            "lineCount": 336,
+            "netLinesChanged": 15,
+            "svgElements": 58
+          }
+        },
+        "quality": {
+          "pass": true,
+          "humanScore": null,
+          "observations": [
+            "Screenshot review clearly passed the minimum presentation gate."
+          ]
+        }
+      }
+    },
+    {
+      "id": "fourier",
+      "name": "Fourier Runtime Canvas",
+      "model": "GPT-5.6 Sol",
+      "reasoningEffort": "high",
+      "creation": {
+        "elapsedSeconds": 252.32,
+        "modelCalls": 23,
+        "summedInputTokens": 1295357,
+        "peakContextTokens": 76899,
+        "outputTokens": 10297,
+        "modelDurationMs": 200557,
+        "nanoAiu": 139905100000,
+        "toolCalls": 27,
+        "artifacts": {
+          "total": {
+            "fileCount": 14,
+            "bytes": null
+          },
+          "details": {
+            "activeLayers": 7,
+            "assetFiles": 12,
+            "compositionFiles": 1,
+            "historyFiles": 1,
+            "supersededDrafts": 5
+          }
+        },
+        "quality": {
+          "pass": false,
+          "humanScore": null,
+          "observations": [
+            "The explicit palette was unavailable.",
+            "The output did not meet the minimum presentation gate."
+          ]
+        }
+      },
+      "revision": {
+        "elapsedSeconds": 171.2,
+        "modelCalls": 9,
+        "summedInputTokens": 832989,
+        "peakContextTokens": 104145,
+        "outputTokens": 11916,
+        "modelDurationMs": 149422,
+        "nanoAiu": 93076050000,
+        "toolCalls": 11,
+        "artifacts": {
+          "total": {
+            "fileCount": 17,
+            "bytes": 515318
+          },
+          "activePortable": {
+            "fileCount": 9,
+            "bytes": 285837
+          },
+          "details": {
+            "activeLayers": 8,
+            "changedLayers": 7,
+            "newAssets": 3,
+            "newAssetBytes": 207741,
+            "newlySupersededAssetsRetained": 2
+          }
+        },
+        "quality": {
+          "pass": false,
+          "humanScore": null,
+          "observations": [
+            "Text appeared upside down and clipped.",
+            "Independent normalization produced inconsistent sizing.",
+            "The scene had no responsive fit.",
+            "The explicit palette remained unavailable."
+          ]
+        }
+      }
+    }
+  ],
+  "comparisons": {
+    "baselineRunId": "html-svg",
+    "candidateRunId": "fourier",
+    "interpretation": "candidate minus baseline",
+    "phases": {
+      "creation": {
+        "elapsedSeconds": {
+          "baseline": 248.3,
+          "candidate": 252.32,
+          "absolute": 4.02,
+          "percent": 1.62
+        },
+        "nanoAiu": {
+          "baseline": 89072775000,
+          "candidate": 139905100000,
+          "absolute": 50832325000,
+          "percent": 57.07
+        },
+        "peakContextTokens": {
+          "baseline": 47180,
+          "candidate": 76899,
+          "absolute": 29719,
+          "percent": 62.99
+        },
+        "outputTokens": {
+          "baseline": 8329,
+          "candidate": 10297,
+          "absolute": 1968,
+          "percent": 23.63
+        },
+        "toolCalls": {
+          "baseline": 27,
+          "candidate": 27,
+          "absolute": 0,
+          "percent": 0
+        },
+        "fileCount": {
+          "baseline": 1,
+          "candidate": 14,
+          "absolute": 13,
+          "percent": 1300
+        },
+        "bytes": {
+          "baseline": 12622,
+          "candidate": null,
+          "absolute": null,
+          "percent": null
+        },
+        "quality": {
+          "baseline": true,
+          "candidate": false,
+          "change": "regression"
+        }
+      },
+      "revision": {
+        "elapsedSeconds": {
+          "baseline": 154.32,
+          "candidate": 171.2,
+          "absolute": 16.88,
+          "percent": 10.94
+        },
+        "nanoAiu": {
+          "baseline": 58960025000,
+          "candidate": 93076050000,
+          "absolute": 34116025000,
+          "percent": 57.86
+        },
+        "peakContextTokens": {
+          "baseline": 60111,
+          "candidate": 104145,
+          "absolute": 44034,
+          "percent": 73.25
+        },
+        "outputTokens": {
+          "baseline": 6769,
+          "candidate": 11916,
+          "absolute": 5147,
+          "percent": 76.04
+        },
+        "toolCalls": {
+          "baseline": 17,
+          "candidate": 11,
+          "absolute": -6,
+          "percent": -35.29
+        },
+        "fileCount": {
+          "baseline": 1,
+          "candidate": 17,
+          "absolute": 16,
+          "percent": 1600
+        },
+        "bytes": {
+          "baseline": 13515,
+          "candidate": 515318,
+          "absolute": 501803,
+          "percent": 3712.93
+        },
+        "quality": {
+          "baseline": true,
+          "candidate": false,
+          "change": "regression"
+        }
+      }
+    }
+  }
+}
