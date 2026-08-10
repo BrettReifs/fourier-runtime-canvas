@@ -1,3 +1,18 @@
+import {
+    createTutorialDemoCache,
+    FIELD_TUTORIALS,
+    tutorialDemoFrame,
+} from "./field-tutorials.mjs";
+import {
+    addAssetPoint,
+    deleteSelectedAssetPoints,
+    moveSelectedAssetPoints,
+    reconstructAssetGeometry,
+    reconstructStrokePoints,
+    selectAssetElement,
+    setAssetStrokeClosed,
+} from "./asset-editor.mjs";
+
 export function audioCueCrossed(
   trigger,
   previousTime,
@@ -13,7 +28,7 @@ export function audioCueCrossed(
 }
 
 export function selectRuntimeMode(currentMode, composition) {
-    return composition?.presentation ? "asset" : currentMode;
+    return composition ? "asset" : currentMode;
 }
 
 export function showRuntimeMode(document, mode) {
@@ -416,14 +431,20 @@ export function renderHtml(nonce) {
       line-height: var(--leading-body-medium, 20px);
     }
     button, input, select { font: inherit; }
-    .shell { display: grid; gap: 14px; min-height: 100vh; padding: 18px; }
+    .shell { min-height: 100vh; }
     .topbar, .status-row, .controls, .endpoint-row, .mode-tabs {
       display: flex;
       align-items: center;
       gap: 9px;
       flex-wrap: wrap;
     }
-    .topbar { justify-content: space-between; }
+    .topbar {
+      min-height: 68px;
+      justify-content: space-between;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border-color-default, #30363d);
+      background: var(--panel);
+    }
     h1 {
       margin: 0;
       font-family: var(--font-sans-display, var(--font-sans, sans-serif));
@@ -467,15 +488,10 @@ export function renderHtml(nonce) {
     }
     .view[hidden] { display: none; }
     .mode-tabs {
-      width: fit-content;
-      padding: 3px;
-      border: 1px solid var(--border-color-default, #30363d);
-      border-radius: 8px;
-      background: var(--panel);
+      justify-content: flex-end;
     }
     .mode-tab {
-      min-height: 30px;
-      border: 0;
+      min-height: 36px;
       background: transparent;
       color: var(--text-color-muted, #8b949e);
     }
@@ -494,9 +510,162 @@ export function renderHtml(nonce) {
         radial-gradient(circle at 50% 50%, var(--accent-muted), transparent 58%),
         var(--background-color-default, #0d1117);
     }
+    #creator-preview {
+      background: var(--background-color-default, #0d1117);
+    }
+    .creator-layout { display: grid; gap: 14px; }
+    .creator-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      flex-wrap: wrap;
+      padding: 12px;
+    }
+    .creator-toolbar select { min-width: min(320px, 100%); }
+    .creator-canvases {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .creator-canvas { position: relative; min-height: 420px; }
+    .creator-canvas canvas { height: 420px; }
+    .stroke-list { display: flex; gap: 7px; flex-wrap: wrap; }
+    .stroke-list button[aria-pressed="true"] {
+      border-color: var(--accent);
+      background: var(--accent-muted);
+    }
+    .creator-status {
+      min-height: 20px;
+      color: var(--text-color-muted, #8b949e);
+      font-size: 12px;
+    }
     #asset-canvas {
       cursor: default;
       touch-action: none;
+    }
+    .scene-view { position: relative; min-height: calc(100vh - 68px); }
+    .scene-stage {
+      position: relative;
+      min-height: calc(100vh - 68px);
+      background: var(--background-color-default, #0d1117);
+    }
+    .scene-stage > .plot-wrap {
+      min-height: calc(100vh - 68px);
+      border: 0;
+      border-radius: 0;
+    }
+    .scene-stage #asset-canvas { height: calc(100vh - 68px); }
+    .scene-chrome {
+      position: absolute;
+      z-index: 5;
+      right: 16px;
+      bottom: 16px;
+      left: 16px;
+      display: grid;
+      grid-template-columns: auto minmax(140px, 1fr) auto auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--border-color-default, #30363d);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--background-color-default, #0d1117) 88%, transparent);
+      backdrop-filter: blur(12px);
+    }
+    .scene-chrome label {
+      display: grid;
+      grid-template-columns: auto minmax(100px, 1fr);
+      align-items: center;
+      gap: 8px;
+    }
+    .scene-editor {
+      position: relative;
+      z-index: 10;
+      border-top: 1px solid var(--border-color-default, #30363d);
+      background: var(--panel);
+    }
+    .scene-editor > summary {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 18px;
+      list-style: none;
+      color: var(--text-color-default, #e6edf3);
+      font-size: 13px;
+      font-weight: var(--font-weight-semibold, 600);
+    }
+    .scene-editor > summary::-webkit-details-marker { display: none; }
+    .scene-editor > summary::after {
+      margin-left: 8px;
+      color: var(--text-color-muted, #8b949e);
+      content: "Layers, timeline, and controls";
+      font-weight: 400;
+    }
+    .scene-editor[open] {
+      position: fixed;
+      z-index: 30;
+      top: 68px;
+      right: 0;
+      bottom: 0;
+      width: min(560px, 44vw);
+      overflow: auto;
+      border-left: 1px solid var(--border-color-default, #30363d);
+      box-shadow: -18px 0 48px #0006;
+    }
+    .scene-editor[open] > summary {
+      position: sticky;
+      z-index: 2;
+      top: 0;
+      justify-content: space-between;
+      background: var(--panel);
+    }
+    .scene-editor[open] > summary::after { content: "Close"; }
+    .scene-editor .grid { grid-template-columns: 1fr; }
+    .support-view { padding: 18px; }
+    .tutorial-field { position: relative; padding-right: 34px; }
+    .field-info {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 28px;
+      min-height: 28px;
+      padding: 0;
+      border-radius: 50%;
+      color: var(--text-color-muted, #8b949e);
+      font-family: var(--font-mono, Consolas, monospace);
+      font-size: 12px;
+    }
+    .field-tutorial {
+      position: fixed;
+      z-index: 60;
+      width: min(340px, calc(100vw - 24px));
+      max-height: min(520px, calc(100vh - 24px));
+      margin: 0;
+      overflow: auto;
+      border: 1px solid var(--border-color-default, #30363d);
+      border-radius: 12px;
+      background: var(--panel);
+      color: var(--text-color-default, #e6edf3);
+      box-shadow: 0 18px 60px #0008;
+      padding: 14px;
+    }
+    .field-tutorial::backdrop { background: transparent; }
+    .field-tutorial header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .field-tutorial h2 { margin: 0; font-size: 16px; }
+    .field-tutorial p { margin: 8px 0; color: var(--text-color-muted, #8b949e); font-size: 12px; }
+    .field-tutorial strong { color: var(--text-color-default, #e6edf3); }
+    #field-tutorial-demo {
+      width: 100%;
+      height: 132px;
+      margin-top: 10px;
+      border: 1px solid var(--border-color-default, #30363d);
+      border-radius: 8px;
+      background: var(--background-color-default, #0d1117);
     }
     #asset-canvas.layer-target { cursor: grab; }
     #asset-canvas.layer-dragging { cursor: grabbing; }
@@ -851,8 +1020,43 @@ export function renderHtml(nonce) {
     }
     @media (max-width: 780px) {
       .grid { grid-template-columns: 1fr; }
+      .creator-canvases { grid-template-columns: 1fr; }
+      .creator-canvas { min-height: 300px; }
+      .creator-canvas canvas { height: 300px; }
       .timeline-track, .timeline-ruler { grid-template-columns: 96px 1fr; }
       .editor-fields { grid-template-columns: repeat(2, 1fr); }
+      button, select, input[type="text"], input[type="number"] { min-height: 44px; }
+      .tutorial-field { padding-right: 50px; }
+      .field-info { width: 44px; min-height: 44px; }
+      label.checkbox-field,
+      label.checkbox-field > span {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .topbar { align-items: flex-start; padding: 10px 12px; }
+      .status-row .badge { display: none; }
+      .scene-view, .scene-stage, .scene-stage > .plot-wrap {
+        min-height: calc(100vh - 88px);
+      }
+      .scene-stage #asset-canvas { height: calc(100vh - 88px); }
+      .scene-chrome {
+        right: 8px;
+        bottom: 8px;
+        left: 8px;
+        grid-template-columns: auto 1fr;
+      }
+      .scene-chrome .scene-action { width: 100%; }
+      .scene-editor[open] {
+        top: auto;
+        width: 100%;
+        max-height: 72vh;
+        border-top-left-radius: 16px;
+        border-top-right-radius: 16px;
+        border-left: 0;
+        box-shadow: 0 -18px 48px #0008;
+      }
       .tour-card {
         right: 14px !important;
         bottom: 14px !important;
@@ -879,21 +1083,35 @@ export function renderHtml(nonce) {
       </div>
     </header>
 
-    <nav class="mode-tabs" role="tablist" aria-label="Visualizer mode">
+    <nav class="mode-tabs" role="tablist" aria-label="Scene navigation">
+      <button class="mode-tab active" data-mode="asset" type="button" role="tab" aria-selected="true" aria-controls="asset-view">Scene</button>
       <button class="mode-tab" data-mode="create" type="button" role="tab" aria-selected="false" aria-controls="create-view">Create</button>
-      <button class="mode-tab" data-mode="asset" type="button" role="tab" aria-selected="false" aria-controls="asset-view">Compose & animate</button>
-      <button class="mode-tab active" data-mode="series" type="button" role="tab" aria-selected="true" aria-controls="series-view">Signal runtime</button>
+      <button class="mode-tab" data-mode="series" type="button" role="tab" aria-selected="false" aria-controls="series-view">Learn</button>
     </nav>
 
-    <section id="create-view" class="view" role="tabpanel" hidden>
-      <div class="grid">
-        <section class="panel plot-wrap" aria-label="Drawing input">
-          <span class="plot-label">Draw one or more strokes</span>
-          <canvas id="drawing">Draw temporary vector strokes to create a Fourier coefficient asset.</canvas>
+    <section id="create-view" class="view support-view" role="tabpanel" hidden>
+      <div class="creator-layout">
+        <section class="panel creator-toolbar" aria-label="Asset library">
+          <label>Asset
+            <select id="creator-asset-library" aria-label="Choose an asset to edit"></select>
+          </label>
+          <button id="new-asset" type="button">New asset</button>
+          <button id="undo-asset-edit" type="button" disabled>Undo asset edit</button>
+          <button id="redo-asset-edit" type="button" disabled>Redo asset edit</button>
+          <output id="creator-library-status" class="creator-status" aria-live="polite"></output>
         </section>
-        <aside class="side">
-          <section class="panel section bridge">
-            <h2>Create frequency asset</h2>
+        <div class="creator-canvases">
+          <section class="panel creator-canvas plot-wrap" aria-label="Editable source geometry">
+            <span class="plot-label">Editable reconstruction</span>
+            <canvas id="drawing" tabindex="0">Select and move reconstructed control points.</canvas>
+          </section>
+          <section class="panel creator-canvas plot-wrap" aria-label="Fourier output preview">
+            <span class="plot-label">Fourier-rendered output</span>
+            <canvas id="creator-preview">Preview the frequency-only output of the current edit.</canvas>
+          </section>
+        </div>
+        <section class="panel section bridge">
+            <h2 id="creator-editor-title">Edit selected asset</h2>
             <label class="field">Asset name
               <input id="asset-name" type="text" maxlength="120" value="Untitled Fourier drawing">
             </label>
@@ -903,46 +1121,64 @@ export function renderHtml(nonce) {
                 <output id="term-limit-value">64</output>
               </span>
             </label>
-            <label><input id="close-strokes" type="checkbox"> Close each stroke</label>
+            <label class="checkbox-field"><input id="close-strokes" type="checkbox"> Close each new stroke</label>
+            <label class="checkbox-field"><input id="asset-closed" type="checkbox"> Selected stroke is closed</label>
+            <div id="creator-strokes" class="stroke-list" aria-label="Asset strokes"></div>
+            <div class="controls">
+              <button id="add-asset-point" type="button">Add point</button>
+              <button id="delete-asset-element" type="button">Delete selection</button>
+              <button id="reset-asset-edit" type="button">Reset changes</button>
+              <button id="save-asset-edit" class="primary" type="button">Save asset</button>
+            </div>
             <div class="controls">
               <button id="undo-stroke" type="button">Undo stroke</button>
               <button id="clear-drawing" type="button">Clear</button>
-              <button id="transform-drawing" class="primary" type="button" disabled>Transform</button>
+              <button id="transform-drawing" type="button" disabled>Create from drawing</button>
             </div>
             <div id="create-error" class="error" role="alert"></div>
+            <output id="asset-edit-status" class="creator-status" aria-live="polite"></output>
             <div class="privacy-note">
-              <strong>Frequency-only output.</strong> Pointer points exist only during this edit. After transformation, the canvas clears them and retains only Fourier coefficients.
+              <strong>Frequency-only persistence.</strong> Reconstructed control points stay in this editor. Save replaces the selected asset revision with coefficients under the same stable ID.
             </div>
-          </section>
-        </aside>
+        </section>
       </div>
     </section>
 
-    <section id="asset-view" class="view" role="tabpanel" hidden>
-      <section class="panel plot-wrap" aria-label="Hybrid semantic and Fourier composition">
-        <span class="plot-label" id="composition-view-label">Hybrid semantic and Fourier composition</span>
-        <canvas id="asset-canvas" aria-describedby="scene-summary">Preview the hybrid semantic and Fourier composition and its animation timeline.</canvas>
-        <p id="scene-summary" class="sr-only" aria-live="polite">No active scene.</p>
-      </section>
-      <section class="panel timeline" style="margin-top:14px">
-        <div class="controls">
+    <section id="asset-view" class="view scene-view" role="tabpanel">
+      <div class="scene-stage">
+        <section class="panel plot-wrap" aria-label="Hybrid semantic and Fourier composition">
+          <span class="plot-label" id="composition-view-label">Hybrid semantic and Fourier composition</span>
+          <canvas id="asset-canvas" aria-describedby="scene-summary">Preview the hybrid semantic and Fourier composition and its animation timeline.</canvas>
+          <p id="scene-summary" class="sr-only" aria-live="polite">No active scene.</p>
+        </section>
+        <div class="scene-chrome" aria-label="Scene playback">
           <button id="asset-play" class="primary" type="button">Play</button>
+          <label>Time <input id="composition-time" type="range" min="0" max="8" step="0.01" value="0"></label>
+          <output id="composition-time-value">0.00 / 8.00s</output>
+          <div class="controls">
+            <button id="open-creator" class="scene-action" type="button">Create</button>
+            <button id="edit-scene" class="scene-action" type="button">Edit / Compose</button>
+          </div>
+        </div>
+      </div>
+      <details id="scene-editor-disclosure" class="scene-editor">
+        <summary>See more</summary>
+        <section class="timeline">
+          <div class="controls">
           <button id="sound-toggle" type="button" aria-pressed="true">Sound on</button>
           <button id="undo-composition" type="button" title="Undo (Ctrl/Cmd+Z)" disabled>Undo</button>
           <button id="redo-composition" type="button" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>Redo</button>
           <button id="restart-composition" type="button">Restart</button>
           <button id="static-final" type="button">Static final</button>
-          <label>Time <input id="composition-time" type="range" min="0" max="8" step="0.01" value="0"></label>
-          <output id="composition-time-value">0.00 / 8.00s</output>
           <label>Speed <input id="asset-speed" type="range" min="0.25" max="3" step="0.25" value="1"></label>
-          <label><input id="show-epicycles" type="checkbox"> Epicycles</label>
+          <label class="checkbox-field"><input id="show-epicycles" type="checkbox"> Epicycles</label>
         </div>
         <output id="keyframe-selection-status" aria-live="polite">No keyframes selected</output>
         <output id="keyframe-retime-status" aria-live="polite"></output>
         <p>Click a diamond to select. Drag to retime; Alt disables 0.01s snapping. Ctrl/Cmd-click toggles; Shift-click selects a range within one layer.</p>
         <div class="timeline-ruler"><span>Layers</span><span>0s</span></div>
         <div id="timeline-tracks"></div>
-      </section>
+        </section>
       <div class="grid" style="margin-top:14px">
         <section class="panel section">
           <h2>Layer and keyframe editor</h2>
@@ -957,6 +1193,8 @@ export function renderHtml(nonce) {
             <div class="editor-fields">
               <label>Start <input id="layer-start" type="number" min="0" step="0.01"></label>
               <label>End <input id="layer-end" type="number" min="0" step="0.01"></label>
+              <label>Matte padding <input id="matte-padding" type="number" min="0" max="64" step="1"></label>
+              <label>Occlusion targets <input id="occlusion-targets" type="text" placeholder="layer-id, z:0"></label>
               <label>Time / group start <input id="key-time" type="number" min="0" max="300" step="0.01"></label>
               <label>Shape <select id="key-shape" aria-label="Shape at keyframe"><option value="">Mixed</option></select></label>
               <label>X <input id="key-x" type="number" min="-2" max="2" step="0.05"></label>
@@ -983,7 +1221,7 @@ export function renderHtml(nonce) {
             <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border-color-default, #30363d)">
               <h2>Procedural line life</h2>
               <div class="editor-fields">
-                <label><span><input id="motion-enabled" type="checkbox"> Enabled</span></label>
+                <label class="checkbox-field"><span><input id="motion-enabled" type="checkbox"> Enabled</span></label>
                 <label>Amount <input id="motion-amount" type="number" min="0" max="0.08" step="0.001"></label>
                 <label>Speed <input id="motion-speed" type="number" min="0" max="5" step="0.05"></label>
                 <label>Detail <input id="motion-detail" type="number" min="0.25" max="20" step="0.25"></label>
@@ -994,7 +1232,7 @@ export function renderHtml(nonce) {
             <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border-color-default, #30363d)">
               <h2>Spectral sound cue</h2>
               <div class="editor-fields">
-                <label><span><input id="audio-enabled" type="checkbox"> Enabled</span></label>
+                <label class="checkbox-field"><span><input id="audio-enabled" type="checkbox"> Enabled</span></label>
                 <label>Trigger <input id="audio-trigger" type="number" min="0" max="300" step="0.01"></label>
                 <label>Pitch (Hz) <input id="audio-frequency" type="number" min="40" max="1200" step="1"></label>
                 <label>Volume <input id="audio-gain" type="number" min="0" max="0.2" step="0.005"></label>
@@ -1024,10 +1262,16 @@ export function renderHtml(nonce) {
             <p>Semantic layers render native text and charts. Fourier layers reference coefficient assets for advanced path animation.</p>
           </section>
         </aside>
-      </div>
+        </div>
+      </details>
     </section>
 
-    <section id="series-view" class="view" role="tabpanel">
+    <section id="series-view" class="view support-view" role="tabpanel" hidden>
+      <section class="panel section">
+        <div class="eyebrow">Learn</div>
+        <h2>How Fourier signals become scenes</h2>
+        <p>Explore how sine terms combine into a waveform, then return to the scene to see those same frequency components reconstruct animated paths.</p>
+      </section>
       <section class="panel plot-wrap" aria-label="Fourier waveform">
         <span class="plot-label">Time-domain output</span>
         <canvas id="waveform">Preview the reconstructed time-domain waveform.</canvas>
@@ -1094,15 +1338,41 @@ export function renderHtml(nonce) {
     </section>
   </div>
 
+  <section id="field-tutorial-popover" class="field-tutorial" popover="manual"
+    role="dialog" aria-modal="false" aria-labelledby="field-tutorial-title">
+    <header>
+      <h2 id="field-tutorial-title"></h2>
+      <button id="field-tutorial-close" type="button" aria-label="Close field help">Close</button>
+    </header>
+    <canvas id="field-tutorial-demo" width="620" height="264"
+      aria-label="Animated field behavior comparison"></canvas>
+    <p id="field-tutorial-explanation"></p>
+    <p><strong>Use it when:</strong> <span id="field-tutorial-when"></span></p>
+    <details>
+      <summary>Tradeoffs and edge cases</summary>
+      <p id="field-tutorial-tradeoffs"></p>
+    </details>
+  </section>
+
   <script nonce="${nonce}">
    ${audioCueCrossed.toString()}
    ${selectRuntimeMode.toString()}
    ${showRuntimeMode.toString()}
+   ${tutorialDemoFrame.toString()}
+   ${createTutorialDemoCache.toString()}
+   ${reconstructStrokePoints.toString()}
+   ${reconstructAssetGeometry.toString()}
+   ${selectAssetElement.toString()}
+   ${moveSelectedAssetPoints.toString()}
+   ${addAssetPoint.toString()}
+   ${deleteSelectedAssetPoints.toString()}
+   ${setAssetStrokeClosed.toString()}
+   const FIELD_TUTORIALS = ${JSON.stringify(FIELD_TUTORIALS)};
    const capabilityToken = new URLSearchParams(location.search).get("token");
    if (!capabilityToken) throw new Error("Canvas capability is missing.");
    history.replaceState(null, "", location.pathname);
    const state = {
-      mode: "series",
+      mode: "asset",
       series: null,
       asset: null,
       assets: new Map(),
@@ -1139,9 +1409,30 @@ export function renderHtml(nonce) {
       localSaveSequence: 0,
       tourReturnFocus: null,
       userEnabledMotion: false,
+      fieldTutorial: null,
+      fieldTutorialReturnFocus: null,
+      creatorAssetId: null,
+      creatorInitialized: false,
+      creatorOriginalAsset: null,
+      creatorGeometry: null,
+      creatorPreviewAsset: null,
+      creatorSelection: [],
+      creatorDrag: null,
+      creatorPreviewSequence: 0,
+      creatorPreviewTimer: null,
+      creatorHistory: { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 },
     };
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const coefficientCache = new WeakMap();
+    const tutorialFrameCache = createTutorialDemoCache((demo, reduced) => (
+      Array.from({ length: reduced ? 2 : 48 }, (_, index, frames) => (
+        tutorialDemoFrame(
+          demo,
+          frames.length === 1 ? 1 : index / (frames.length - 1),
+          reduced
+        )
+      ))
+    ));
 
     const TOUR_STEPS = [
       {
@@ -1226,6 +1517,7 @@ export function renderHtml(nonce) {
       waveform: document.querySelector("#waveform"),
       spectrum: document.querySelector("#spectrum"),
       drawing: document.querySelector("#drawing"),
+      creator: document.querySelector("#creator-preview"),
       asset: document.querySelector("#asset-canvas"),
     };
     const contexts = Object.fromEntries(
@@ -1302,11 +1594,9 @@ export function renderHtml(nonce) {
         return;
       }
       if (state.mode === "asset") {
-        title.textContent = state.asset?.name ?? "Fourier asset playback";
-        status.textContent = state.asset?.createdAt
-          ? "Asset " + new Date(state.asset.createdAt).toLocaleTimeString()
-          : "Composition revision " + (state.composition?.revision ?? 0);
-        runtimeKind.textContent = "Fourier composition runtime";
+        title.textContent = state.composition?.name ?? "Untitled scene";
+        status.textContent = "Scene revision " + (state.composition?.revision ?? 0);
+        runtimeKind.textContent = "Scene";
         return;
       }
       if (state.mode === "create") {
@@ -1322,11 +1612,20 @@ export function renderHtml(nonce) {
     }
 
     function setMode(mode) {
+      closeFieldTutorial();
       state.mode = mode;
       showRuntimeMode(document, mode);
       updateHeader();
       if (mode === "asset") renderTimeline();
-      if (mode === "create") drawInput();
+      if (mode === "create") {
+        if (!state.creatorInitialized) {
+          state.creatorInitialized = true;
+          selectCreatorAsset(state.assetSummaries[0]?.id ?? "");
+        } else {
+          drawInput();
+          drawCreatorPreview();
+        }
+      }
       if (mode === "series") drawSeriesSpectrum();
     }
 
@@ -2317,6 +2616,48 @@ export function renderHtml(nonce) {
       const height = rect.height;
       contexts.drawing.clearRect(0, 0, width, height);
       drawGrid(contexts.drawing, width, height);
+      if (state.creatorGeometry) {
+        const scale = Math.min(width, height) * 0.38;
+        state.creatorGeometry.strokes.forEach((stroke, strokeIndex) => {
+          contexts.drawing.strokeStyle = token("--accent", "#2f81f7");
+          contexts.drawing.lineWidth = state.creatorSelection.some((selected) => (
+            selected.strokeIndex === strokeIndex
+            && selected.pointIndex === undefined
+          )) ? 4 : 2;
+          contexts.drawing.beginPath();
+          stroke.points.forEach((point, pointIndex) => {
+            const x = width / 2 + point.x * scale;
+            const y = height / 2 + point.y * scale;
+            if (pointIndex === 0) contexts.drawing.moveTo(x, y);
+            else contexts.drawing.lineTo(x, y);
+          });
+          if (stroke.closed) contexts.drawing.closePath();
+          contexts.drawing.stroke();
+          stroke.points.forEach((point, pointIndex) => {
+            const selected = state.creatorSelection.some((reference) => (
+              reference.strokeIndex === strokeIndex
+              && reference.pointIndex === pointIndex
+            ));
+            contexts.drawing.fillStyle = selected
+              ? token("--text-color-default", "#e6edf3")
+              : token("--background-color-default", "#0d1117");
+            contexts.drawing.strokeStyle = token("--accent", "#2f81f7");
+            contexts.drawing.lineWidth = 2;
+            contexts.drawing.beginPath();
+            contexts.drawing.arc(
+              width / 2 + point.x * scale,
+              height / 2 + point.y * scale,
+              selected ? 6 : 4,
+              0,
+              Math.PI * 2
+            );
+            contexts.drawing.fill();
+            contexts.drawing.stroke();
+          });
+        });
+        document.querySelector("#transform-drawing").disabled = true;
+        return;
+      }
       const allStrokes = state.activeStroke
         ? [...state.strokes, state.activeStroke]
         : state.strokes;
@@ -2334,6 +2675,113 @@ export function renderHtml(nonce) {
         contexts.drawing.stroke();
       }
       document.querySelector("#transform-drawing").disabled = state.strokes.length === 0;
+    }
+
+    function drawFrequencyAssetPreview(context, asset, width, height, style) {
+      if (!asset) return;
+      const scale = Math.min(width, height) * 0.38;
+      context.save();
+      context.strokeStyle = style.color;
+      context.globalAlpha = style.opacity;
+      context.lineWidth = style.lineWidth;
+      context.setLineDash(style.dash ?? []);
+      for (const stroke of asset.strokes) {
+        context.beginPath();
+        const samples = Math.min(512, Math.max(96, stroke.sampleCount));
+        for (let index = 0; index <= samples; index++) {
+          const point = pointFromCoefficients(stroke, index / samples);
+          const x = width / 2 + point.x * scale;
+          const y = height / 2 + point.y * scale;
+          if (index === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        }
+        if (stroke.closed) context.closePath();
+        context.stroke();
+      }
+      context.restore();
+    }
+
+    function drawCreatorPreview() {
+      if (state.mode !== "create") return;
+      const rect = fitCanvas(canvases.creator, contexts.creator);
+      const width = rect.width;
+      const height = rect.height;
+      contexts.creator.clearRect(0, 0, width, height);
+      drawGrid(contexts.creator, width, height);
+      drawFrequencyAssetPreview(
+        contexts.creator,
+        state.creatorOriginalAsset,
+        width,
+        height,
+        {
+          color: token("--text-color-muted", "#8b949e"),
+          opacity: 0.45,
+          lineWidth: 2,
+          dash: [6, 6],
+        }
+      );
+      drawFrequencyAssetPreview(
+        contexts.creator,
+        state.creatorPreviewAsset ?? state.asset,
+        width,
+        height,
+        {
+          color: token("--accent", "#2f81f7"),
+          opacity: 1,
+          lineWidth: 3,
+        }
+      );
+    }
+
+    async function refreshCreatorPreview() {
+      const payload = creatorEditPayload();
+      if (!payload || !state.creatorAssetId) return;
+      const sequence = ++state.creatorPreviewSequence;
+      try {
+        const preview = await requestJson(
+          "/api/assets/" + encodeURIComponent(state.creatorAssetId) + "/preview",
+          { method: "POST", body: JSON.stringify(payload) }
+        );
+        if (sequence !== state.creatorPreviewSequence) return;
+        state.creatorPreviewAsset = preview;
+        drawCreatorPreview();
+        document.querySelector("#asset-edit-status").textContent =
+          "Preview only. Save commits one new asset revision.";
+      } catch (error) {
+        if (sequence !== state.creatorPreviewSequence) return;
+        document.querySelector("#asset-edit-status").textContent = error.message;
+      }
+    }
+
+    function queueCreatorPreview() {
+      clearTimeout(state.creatorPreviewTimer);
+      state.creatorPreviewTimer = setTimeout(refreshCreatorPreview, 45);
+    }
+
+    function creatorPointFromEvent(event) {
+      const rect = canvases.drawing.getBoundingClientRect();
+      const scale = Math.min(rect.width, rect.height) * 0.38;
+      return {
+        x: (event.clientX - rect.left - rect.width / 2) / scale,
+        y: (event.clientY - rect.top - rect.height / 2) / scale,
+      };
+    }
+
+    function nearestCreatorPoint(event) {
+      if (!state.creatorGeometry) return null;
+      const point = creatorPointFromEvent(event);
+      let nearest = null;
+      let distance = Infinity;
+      state.creatorGeometry.strokes.forEach((stroke, strokeIndex) => {
+        stroke.points.forEach((candidate, pointIndex) => {
+          const nextDistance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+          if (nextDistance < distance) {
+            distance = nextDistance;
+            nearest = { strokeIndex, pointIndex };
+          }
+        });
+      });
+      return distance <= 0.08 ? nearest : null;
     }
 
     function pointerPoint(event) {
@@ -2369,7 +2817,7 @@ export function renderHtml(nonce) {
         ...(requestOptions.headers ?? {}),
         "X-Fourier-Capability": capabilityToken,
       };
-      if (requestOptions.method === "POST") {
+      if (requestOptions.method && requestOptions.method !== "GET") {
         requestOptions.headers["Content-Type"] = "application/json";
         requestOptions.body ??= "{}";
       }
@@ -2410,6 +2858,8 @@ export function renderHtml(nonce) {
             id: asset.id,
             name: asset.name,
             createdAt: asset.createdAt,
+            updatedAt: asset.updatedAt,
+            revision: asset.revision,
             strokeCount: asset.strokeCount,
             termCount: asset.strokes.reduce(
               (sum, stroke) => sum + stroke.coefficients.length,
@@ -2418,7 +2868,9 @@ export function renderHtml(nonce) {
           }, ...state.assetSummaries]);
         }
         await addLayer(asset.id, state.compositionTime);
-        setMode("asset");
+        await selectCreatorAsset(asset.id);
+        document.querySelector("#asset-edit-status").textContent =
+          "Created the asset, added it to the scene, and opened it for touch-up.";
       } catch (error) {
         errorElement.textContent = error.message;
       } finally {
@@ -2551,8 +3003,16 @@ export function renderHtml(nonce) {
     }
 
     function applyAsset(asset) {
+      const creatorChanged = (
+        state.creatorOriginalAsset?.id === asset.id
+        && (state.creatorOriginalAsset.revision ?? 0) !== (asset.revision ?? 0)
+      );
       state.asset = asset;
       state.assets.set(asset.id, asset);
+      if (creatorChanged && state.mode === "create") {
+        document.querySelector("#asset-edit-status").textContent =
+          "A newer asset revision is available. Reset or reselect the asset to reload it.";
+      }
       if (state.mode === "asset") updateHeader();
     }
 
@@ -2565,7 +3025,7 @@ export function renderHtml(nonce) {
 
     function applyAssetSummaries(summaries) {
       state.assetSummaries = summaries;
-      for (const id of ["asset-library", "key-shape"]) {
+      for (const id of ["asset-library", "key-shape", "creator-asset-library"]) {
         const select = document.querySelector("#" + id);
         const selected = select.value;
         select.replaceChildren();
@@ -2574,6 +3034,12 @@ export function renderHtml(nonce) {
           mixed.value = "";
           mixed.textContent = "Mixed";
           select.append(mixed);
+        }
+        if (id === "creator-asset-library") {
+          const createNew = document.createElement("option");
+          createNew.value = "";
+          createNew.textContent = "New asset";
+          select.append(createNew);
         }
         for (const summary of summaries) {
           const option = document.createElement("option");
@@ -2586,6 +3052,199 @@ export function renderHtml(nonce) {
         }
       }
       document.querySelector("#add-layer").disabled = summaries.length === 0;
+    }
+
+    function creatorEditPayload() {
+      if (!state.creatorGeometry || !state.creatorOriginalAsset) return null;
+      return {
+        name: document.querySelector("#asset-name").value,
+        termLimit: Number(document.querySelector("#term-limit").value),
+        strokes: state.creatorGeometry.strokes,
+        runtime: state.creatorOriginalAsset.runtime,
+      };
+    }
+
+    function creatorHasUnsavedChanges() {
+      const payload = creatorEditPayload();
+      if (!payload || !state.creatorOriginalAsset) return false;
+      const baseline = reconstructAssetGeometry(state.creatorOriginalAsset);
+      return JSON.stringify(payload) !== JSON.stringify({
+        name: state.creatorOriginalAsset.name,
+        termLimit: state.creatorOriginalAsset.termLimit,
+        strokes: baseline.strokes,
+        runtime: state.creatorOriginalAsset.runtime,
+      });
+    }
+
+    function confirmDiscardCreatorChanges() {
+      return !creatorHasUnsavedChanges()
+        || window.confirm("Discard unsaved point and stroke edits?");
+    }
+
+    function updateCreatorHistory(history) {
+      state.creatorHistory = history;
+      document.querySelector("#undo-asset-edit").disabled = !history.canUndo;
+      document.querySelector("#redo-asset-edit").disabled = !history.canRedo;
+    }
+
+    function creatorAssetIsMatte(assetId) {
+      return state.composition?.layers.some((layer) => (
+        layer.matteAssetId === assetId
+        || layer.keyframes.some((keyframe) => keyframe.matteAssetId === assetId)
+      )) ?? false;
+    }
+
+    function renderCreatorStrokes() {
+      const container = document.querySelector("#creator-strokes");
+      container.replaceChildren();
+      const geometry = state.creatorGeometry;
+      if (!geometry) return;
+      geometry.strokes.forEach((stroke, strokeIndex) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Stroke " + (strokeIndex + 1) +
+          " · " + (stroke.closed ? "closed" : "open");
+        button.setAttribute("aria-pressed", String(state.creatorSelection.some(
+          (selected) => (
+            selected.strokeIndex === strokeIndex
+            && selected.pointIndex === undefined
+          )
+        )));
+        button.addEventListener("click", (event) => {
+          state.creatorSelection = selectAssetElement(
+            state.creatorSelection,
+            { strokeIndex },
+            { toggle: event.ctrlKey || event.metaKey }
+          );
+          document.querySelector("#asset-closed").checked = stroke.closed;
+          renderCreatorStrokes();
+          drawInput();
+        });
+        container.append(button);
+      });
+      const selectedStroke = state.creatorSelection.at(-1)?.strokeIndex ?? 0;
+      document.querySelector("#asset-closed").checked =
+        geometry.strokes[selectedStroke]?.closed ?? false;
+    }
+
+    function setCreatorNewAssetMode() {
+      state.creatorAssetId = null;
+      state.creatorOriginalAsset = null;
+      state.creatorGeometry = null;
+      state.creatorPreviewAsset = null;
+      state.creatorSelection = [];
+      state.strokes = [];
+      state.activeStroke = null;
+      document.querySelector("#creator-asset-library").value = "";
+      document.querySelector("#creator-editor-title").textContent = "Create new asset";
+      document.querySelector("#save-asset-edit").disabled = true;
+      document.querySelector("#asset-closed").disabled = true;
+      document.querySelector("#add-asset-point").disabled = true;
+      document.querySelector("#delete-asset-element").disabled = true;
+      document.querySelector("#reset-asset-edit").disabled = true;
+      document.querySelector("#creator-library-status").textContent =
+        "Draw one or more strokes, then create a frequency-only asset.";
+      updateCreatorHistory({
+        canUndo: false,
+        canRedo: false,
+        undoCount: 0,
+        redoCount: 0,
+      });
+      renderCreatorStrokes();
+      drawInput();
+      drawCreatorPreview();
+    }
+
+    async function selectCreatorAsset(assetId) {
+      if (!assetId) {
+        setCreatorNewAssetMode();
+        return;
+      }
+      const asset = await loadAssetById(assetId);
+      state.creatorAssetId = asset.id;
+      state.creatorOriginalAsset = structuredClone(asset);
+      state.creatorGeometry = reconstructAssetGeometry(asset);
+      state.creatorPreviewAsset = asset;
+      state.creatorSelection = [{ strokeIndex: 0 }];
+      document.querySelector("#creator-asset-library").value = asset.id;
+      document.querySelector("#creator-editor-title").textContent = "Edit " + asset.name;
+      document.querySelector("#asset-name").value = asset.name;
+      document.querySelector("#term-limit").value = asset.termLimit;
+      document.querySelector("#term-limit-value").textContent = asset.termLimit;
+      for (const id of [
+        "save-asset-edit",
+        "asset-closed",
+        "add-asset-point",
+        "delete-asset-element",
+        "reset-asset-edit",
+      ]) {
+        document.querySelector("#" + id).disabled = false;
+      }
+      document.querySelector("#creator-library-status").textContent =
+        "Editing revision " + (asset.revision ?? 0) + " under stable ID " + asset.id + ".";
+      updateCreatorHistory(await requestJson(
+        "/api/assets/" + encodeURIComponent(asset.id) + "/history"
+      ));
+      renderCreatorStrokes();
+      drawInput();
+      drawCreatorPreview();
+    }
+
+    async function saveCreatorAsset() {
+      const payload = creatorEditPayload();
+      if (!payload || !state.creatorOriginalAsset) return;
+      const button = document.querySelector("#save-asset-edit");
+      button.disabled = true;
+      try {
+        const previousRevision = state.creatorOriginalAsset.revision ?? 0;
+        const asset = await requestJson(
+          "/api/assets/" + encodeURIComponent(state.creatorAssetId),
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              expectedRevision: previousRevision,
+              ...payload,
+            }),
+          }
+        );
+        applyAsset(asset);
+        await selectCreatorAsset(asset.id);
+        document.querySelector("#asset-edit-status").textContent =
+          asset.revision === previousRevision
+            ? "No changes to save."
+            : "Saved revision " + asset.revision + " under the same asset ID.";
+      } catch (error) {
+        if (error.payload?.current) {
+          document.querySelector("#asset-edit-status").textContent =
+            "This asset changed elsewhere. Reload it before saving.";
+        } else {
+          document.querySelector("#asset-edit-status").textContent = error.message;
+        }
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function restoreCreatorAsset(direction) {
+      if (!state.creatorOriginalAsset) return;
+      try {
+        const asset = await requestJson(
+          "/api/assets/" + encodeURIComponent(state.creatorAssetId) + "/" + direction,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              expectedRevision: state.creatorOriginalAsset.revision ?? 0,
+            }),
+          }
+        );
+        applyAsset(asset);
+        await selectCreatorAsset(asset.id);
+        document.querySelector("#asset-edit-status").textContent =
+          (direction === "undo" ? "Undid" : "Redid") +
+          " asset edit. Current revision " + asset.revision + ".";
+      } catch (error) {
+        document.querySelector("#asset-edit-status").textContent = error.message;
+      }
     }
 
     async function applyComposition(composition) {
@@ -3206,6 +3865,15 @@ export function renderHtml(nonce) {
           : "");
       document.querySelector("#layer-start").value = layer.start;
       document.querySelector("#layer-end").value = layer.end;
+      const mattePadding = document.querySelector("#matte-padding");
+      const occlusionTargets = document.querySelector("#occlusion-targets");
+      mattePadding.disabled = layer.type !== "fourier";
+      occlusionTargets.disabled = layer.type !== "fourier";
+      mattePadding.value = layer.mattePadding ?? 3;
+      occlusionTargets.value = [
+        ...(layer.occludes?.layerIds ?? []),
+        ...(layer.occludes?.zIndices ?? []).map((zIndex) => "z:" + zIndex),
+      ].join(", ");
       setEditorValue("key-time", keyframeState.time, 2);
       setEditorValue("key-x", keyframeState.x, 3);
       setEditorValue("key-y", keyframeState.y, 3);
@@ -3510,6 +4178,172 @@ export function renderHtml(nonce) {
       URL.revokeObjectURL(url);
     }
 
+    function drawFieldTutorialFrame(frame) {
+      const canvas = document.querySelector("#field-tutorial-demo");
+      const context = canvas.getContext("2d");
+      const width = canvas.width;
+      const height = canvas.height;
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = token("--background-color-default", "#0d1117");
+      context.fillRect(0, 0, width, height);
+      context.strokeStyle = token("--grid", "#30363d");
+      context.lineWidth = 2;
+      for (let x = 0; x <= width; x += width / 8) {
+        context.beginPath();
+        context.moveTo(x, 0);
+        context.lineTo(x, height);
+        context.stroke();
+      }
+
+      const progress = Array.isArray(frame.progress) ? 1 : frame.progress;
+      const eased = frame.kind === "easing"
+        ? progress < 0.5
+          ? 2 * progress * progress
+          : 1 - ((-2 * progress + 2) ** 2) / 2
+        : progress;
+      const x = frame.kind === "x" ? 120 + eased * 380 : width / 2;
+      const y = frame.kind === "y" ? 210 - eased * 150 : height / 2;
+      const scale = frame.kind === "scale" ? 0.55 + eased * 0.75 : 1;
+      const rotation = frame.kind === "rotation" ? -0.5 + eased : 0;
+      const opacity = frame.kind === "opacity" ? 0.2 + eased * 0.8 : 1;
+
+      if (["time", "range"].includes(frame.kind)) {
+        context.strokeStyle = token("--text-color-muted", "#8b949e");
+        context.lineWidth = 10;
+        context.beginPath();
+        context.moveTo(70, height / 2);
+        context.lineTo(width - 70, height / 2);
+        context.stroke();
+        context.fillStyle = token("--accent", "#2f81f7");
+        context.beginPath();
+        context.arc(70 + eased * (width - 140), height / 2, 14, 0, Math.PI * 2);
+        context.fill();
+      } else if (frame.kind === "audio") {
+        context.strokeStyle = token("--accent", "#2f81f7");
+        context.lineWidth = 4;
+        context.beginPath();
+        for (let sample = 0; sample <= 120; sample++) {
+          const sampleX = (sample / 120) * width;
+          const sampleY = height / 2 +
+            Math.sin(sample * (0.15 + eased * 0.45)) * (18 + eased * 54);
+          if (sample === 0) context.moveTo(sampleX, sampleY);
+          else context.lineTo(sampleX, sampleY);
+        }
+        context.stroke();
+      } else if (frame.kind === "occlusion") {
+        context.strokeStyle = token("--text-color-muted", "#8b949e");
+        context.lineWidth = 3;
+        for (let line = 30; line < height; line += 18) {
+          context.beginPath();
+          context.moveTo(30, line);
+          context.lineTo(width - 30, line);
+          context.stroke();
+        }
+        context.fillStyle = token("--background-color-default", "#0d1117");
+        context.beginPath();
+        context.arc(width / 2, height / 2, 64, 0, Math.PI * 2);
+        if (eased >= 0.5) context.fill();
+      } else {
+        context.save();
+        context.translate(x, y);
+        context.rotate(rotation);
+        context.scale(scale, scale);
+        context.globalAlpha = opacity;
+        context.strokeStyle = token("--accent", "#2f81f7");
+        context.lineWidth = frame.kind === "matte" ? 10 + eased * 18 : 8;
+        context.beginPath();
+        const reveal = frame.kind === "reveal" ? eased : 1;
+        const segments = frame.kind === "terms" ? Math.round(4 + eased * 24) : 32;
+        for (let index = 0; index <= segments * reveal; index++) {
+          const angle = (index / segments) * Math.PI * 2;
+          const radius = 54 + Math.sin(angle * 3) * 12;
+          const pointX = Math.cos(angle) * radius;
+          const pointY = Math.sin(angle) * radius;
+          if (index === 0) context.moveTo(pointX, pointY);
+          else context.lineTo(pointX, pointY);
+        }
+        if (frame.kind === "topology" && eased >= 0.5) context.closePath();
+        context.stroke();
+        context.restore();
+      }
+
+      context.fillStyle = token("--text-color-muted", "#8b949e");
+      context.font = "22px " + token("--font-mono", "monospace");
+      context.fillText(String(frame.from), 18, 30);
+      const toText = String(frame.to);
+      context.fillText(toText, width - context.measureText(toText).width - 18, 30);
+    }
+
+    function renderFieldTutorial(timestamp) {
+      const tutorial = state.fieldTutorial;
+      if (!tutorial) return;
+      const frames = tutorialFrameCache.get(tutorial, reduceMotion);
+      const index = reduceMotion
+        ? 1
+        : Math.floor((timestamp / 42) % frames.length);
+      drawFieldTutorialFrame(frames[index]);
+      if (!reduceMotion) requestAnimationFrame(renderFieldTutorial);
+    }
+
+    function closeFieldTutorial() {
+      const popover = document.querySelector("#field-tutorial-popover");
+      if (!state.fieldTutorial) return false;
+      state.fieldTutorial = null;
+      if (typeof popover.hidePopover === "function") popover.hidePopover();
+      else popover.hidden = true;
+      const returnFocus = state.fieldTutorialReturnFocus;
+      state.fieldTutorialReturnFocus = null;
+      returnFocus?.focus();
+      return true;
+    }
+
+    function openFieldTutorial(tutorial, button) {
+      const popover = document.querySelector("#field-tutorial-popover");
+      state.fieldTutorial = tutorial;
+      state.fieldTutorialReturnFocus = button;
+      document.querySelector("#field-tutorial-title").textContent = tutorial.title;
+      document.querySelector("#field-tutorial-explanation").textContent =
+        tutorial.explanation;
+      document.querySelector("#field-tutorial-when").textContent = tutorial.whenToUse;
+      document.querySelector("#field-tutorial-tradeoffs").textContent =
+        tutorial.tradeoffs;
+      if (typeof popover.showPopover === "function") popover.showPopover();
+      else popover.hidden = false;
+      const rect = button.getBoundingClientRect();
+      const width = Math.min(340, window.innerWidth - 24);
+      popover.style.left = Math.min(
+        window.innerWidth - width - 12,
+        Math.max(12, rect.left)
+      ) + "px";
+      popover.style.top = Math.min(
+        window.innerHeight - Math.min(500, popover.offsetHeight) - 12,
+        rect.bottom + 8
+      ) + "px";
+      document.querySelector("#field-tutorial-close").focus();
+      requestAnimationFrame(renderFieldTutorial);
+    }
+
+    function installFieldTutorials() {
+      for (const tutorial of Object.values(FIELD_TUTORIALS)) {
+        const control = document.querySelector("#" + tutorial.fieldId);
+        const label = control?.closest("label");
+        if (!control || !label || label.querySelector(".field-info")) continue;
+        label.classList.add("tutorial-field");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "field-info";
+        button.textContent = "i";
+        button.setAttribute("aria-label", "Learn about " + tutorial.title);
+        button.setAttribute("aria-controls", "field-tutorial-popover");
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openFieldTutorial(tutorial, button);
+        });
+        label.append(button);
+      }
+    }
+
     async function initialize() {
       const [series, info, summaries, composition, history] = await Promise.all([
         requestJson("/api/state"),
@@ -3542,6 +4376,7 @@ export function renderHtml(nonce) {
       } catch (error) {
         if (!error.message.includes("No frequency-domain")) throw error;
       }
+      installFieldTutorials();
 
       const events = new EventSource(
         "/events?token=" + encodeURIComponent(capabilityToken)
@@ -3558,6 +4393,10 @@ export function renderHtml(nonce) {
       });
       events.addEventListener("history", (event) => {
         applyHistory(JSON.parse(event.data));
+      });
+      events.addEventListener("asset-history", (event) => {
+        const history = JSON.parse(event.data);
+        if (history.assetId === state.creatorAssetId) updateCreatorHistory(history);
       });
     }
 
@@ -3578,6 +4417,28 @@ export function renderHtml(nonce) {
         tabs[next].focus();
       });
     });
+    document.querySelector("#open-creator").addEventListener("click", () => {
+      setMode("create");
+    });
+    document.querySelector("#edit-scene").addEventListener("click", () => {
+      setMode("asset");
+      const disclosure = document.querySelector("#scene-editor-disclosure");
+      disclosure.open = true;
+      disclosure.querySelector("summary").focus();
+    });
+    document.querySelector("#scene-editor-disclosure").addEventListener("toggle", () => {
+      requestAnimationFrame(() => drawAsset());
+    });
+    document.querySelector("#field-tutorial-close").addEventListener(
+      "click",
+      closeFieldTutorial
+    );
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && closeFieldTutorial()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    }, true);
     document.querySelector("#start-tour").addEventListener("click", startTour);
     document.querySelector("#tour-exit").addEventListener("click", () => closeTour());
     document.querySelector("#tour-back").addEventListener("click", () => {
@@ -3672,6 +4533,33 @@ export function renderHtml(nonce) {
     });
 
     canvases.drawing.addEventListener("pointerdown", (event) => {
+      if (state.creatorGeometry) {
+        const point = nearestCreatorPoint(event);
+        if (!point) {
+          state.creatorSelection = [];
+          drawInput();
+          return;
+        }
+        state.creatorSelection = selectAssetElement(
+          state.creatorSelection,
+          point,
+          { toggle: event.ctrlKey || event.metaKey }
+        );
+        if (!state.creatorSelection.some((selected) => (
+          selected.pointIndex !== undefined
+        ))) {
+          state.creatorSelection = [point];
+        }
+        state.creatorDrag = {
+          pointerId: event.pointerId,
+          start: creatorPointFromEvent(event),
+          geometry: structuredClone(state.creatorGeometry),
+        };
+        canvases.drawing.setPointerCapture(event.pointerId);
+        renderCreatorStrokes();
+        drawInput();
+        return;
+      }
       if (state.strokes.length >= state.limits.maxStrokes) {
         document.querySelector("#create-error").textContent =
           "Drawing reached the safe stroke limit. Transform or clear it before continuing.";
@@ -3683,20 +4571,88 @@ export function renderHtml(nonce) {
       drawInput();
     });
     canvases.drawing.addEventListener("pointermove", (event) => {
+      if (state.creatorDrag?.pointerId === event.pointerId) {
+        const point = creatorPointFromEvent(event);
+        state.creatorGeometry = moveSelectedAssetPoints(
+          state.creatorDrag.geometry,
+          state.creatorSelection,
+          point.x - state.creatorDrag.start.x,
+          point.y - state.creatorDrag.start.y
+        );
+        drawInput();
+        queueCreatorPreview();
+        return;
+      }
       if (!state.activeStroke) return;
       const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
       events.forEach(addPointerPoint);
       drawInput();
     });
     canvases.drawing.addEventListener("pointerup", (event) => {
+      if (state.creatorDrag?.pointerId === event.pointerId) {
+        if (canvases.drawing.hasPointerCapture(event.pointerId)) {
+          canvases.drawing.releasePointerCapture(event.pointerId);
+        }
+        state.creatorDrag = null;
+        refreshCreatorPreview();
+        return;
+      }
       addPointerPoint(event);
       if (state.activeStroke.length >= 2) state.strokes.push(state.activeStroke);
       state.activeStroke = null;
       drawInput();
     });
     canvases.drawing.addEventListener("pointercancel", () => {
+      if (state.creatorDrag) {
+        state.creatorGeometry = state.creatorDrag.geometry;
+        state.creatorDrag = null;
+        drawInput();
+        queueCreatorPreview();
+        return;
+      }
       state.activeStroke = null;
       drawInput();
+    });
+    canvases.drawing.addEventListener("keydown", (event) => {
+      if (!state.creatorGeometry) return;
+      const selectedPoints = state.creatorSelection.filter((selected) => (
+        selected.pointIndex !== undefined
+      ));
+      if (
+        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+        && selectedPoints.length
+      ) {
+        event.preventDefault();
+        const step = event.shiftKey ? 0.05 : 0.01;
+        const offsets = {
+          ArrowLeft: [-step, 0],
+          ArrowRight: [step, 0],
+          ArrowUp: [0, -step],
+          ArrowDown: [0, step],
+        };
+        state.creatorGeometry = moveSelectedAssetPoints(
+          state.creatorGeometry,
+          selectedPoints,
+          ...offsets[event.key]
+        );
+        drawInput();
+        queueCreatorPreview();
+      }
+      if (["Delete", "Backspace"].includes(event.key) && state.creatorSelection.length) {
+        event.preventDefault();
+        try {
+          state.creatorGeometry = deleteSelectedAssetPoints(
+            state.creatorGeometry,
+            state.creatorSelection
+          );
+          state.creatorSelection = [];
+          renderCreatorStrokes();
+          drawInput();
+          queueCreatorPreview();
+        } catch (error) {
+          document.querySelector("#asset-edit-status").textContent = error.message;
+        }
+      }
     });
 
     canvases.asset.addEventListener("pointerdown", (event) => {
@@ -3774,6 +4730,102 @@ export function renderHtml(nonce) {
     });
     document.querySelector("#term-limit").addEventListener("input", (event) => {
       document.querySelector("#term-limit-value").textContent = event.target.value;
+      if (state.creatorGeometry) queueCreatorPreview();
+    });
+    document.querySelector("#asset-name").addEventListener("input", () => {
+      if (state.creatorGeometry) queueCreatorPreview();
+    });
+    document.querySelector("#creator-asset-library").addEventListener(
+      "change",
+      (event) => {
+        if (!confirmDiscardCreatorChanges()) {
+          event.target.value = state.creatorAssetId ?? "";
+          return;
+        }
+        selectCreatorAsset(event.target.value);
+      }
+    );
+    document.querySelector("#new-asset").addEventListener("click", () => {
+      if (confirmDiscardCreatorChanges()) setCreatorNewAssetMode();
+    });
+    document.querySelector("#save-asset-edit").addEventListener("click", saveCreatorAsset);
+    document.querySelector("#reset-asset-edit").addEventListener("click", () => {
+      if (!state.creatorOriginalAsset) return;
+      state.creatorGeometry = reconstructAssetGeometry(state.creatorOriginalAsset);
+      state.creatorPreviewAsset = state.creatorOriginalAsset;
+      state.creatorSelection = [{ strokeIndex: 0 }];
+      renderCreatorStrokes();
+      drawInput();
+      drawCreatorPreview();
+      document.querySelector("#asset-edit-status").textContent =
+        "Reset to the currently saved revision.";
+    });
+    document.querySelector("#undo-asset-edit").addEventListener(
+      "click",
+      () => restoreCreatorAsset("undo")
+    );
+    document.querySelector("#redo-asset-edit").addEventListener(
+      "click",
+      () => restoreCreatorAsset("redo")
+    );
+    document.querySelector("#asset-closed").addEventListener("change", (event) => {
+      const strokeIndex = state.creatorSelection.at(-1)?.strokeIndex ?? 0;
+      try {
+        state.creatorGeometry = setAssetStrokeClosed(
+          state.creatorGeometry,
+          strokeIndex,
+          event.target.checked
+        );
+        renderCreatorStrokes();
+        drawInput();
+        queueCreatorPreview();
+        if (!event.target.checked && creatorAssetIsMatte(state.creatorAssetId)) {
+          document.querySelector("#asset-edit-status").textContent =
+            "Warning: this asset is used as a matte. Open contours can leak masking.";
+        }
+      } catch (error) {
+        event.target.checked = !event.target.checked;
+        document.querySelector("#asset-edit-status").textContent = error.message;
+      }
+    });
+    document.querySelector("#add-asset-point").addEventListener("click", () => {
+      const selected = state.creatorSelection.findLast((reference) => (
+        reference.pointIndex !== undefined
+      ));
+      const strokeIndex = selected?.strokeIndex
+        ?? state.creatorSelection.at(-1)?.strokeIndex
+        ?? 0;
+      const stroke = state.creatorGeometry?.strokes[strokeIndex];
+      if (!stroke) return;
+      const pointIndex = selected?.pointIndex ?? stroke.points.length - 1;
+      const nextIndex = (pointIndex + 1) % stroke.points.length;
+      const point = {
+        x: (stroke.points[pointIndex].x + stroke.points[nextIndex].x) / 2,
+        y: (stroke.points[pointIndex].y + stroke.points[nextIndex].y) / 2,
+      };
+      state.creatorGeometry = addAssetPoint(
+        state.creatorGeometry,
+        strokeIndex,
+        pointIndex,
+        point
+      );
+      state.creatorSelection = [{ strokeIndex, pointIndex: pointIndex + 1 }];
+      drawInput();
+      queueCreatorPreview();
+    });
+    document.querySelector("#delete-asset-element").addEventListener("click", () => {
+      try {
+        state.creatorGeometry = deleteSelectedAssetPoints(
+          state.creatorGeometry,
+          state.creatorSelection
+        );
+        state.creatorSelection = [];
+        renderCreatorStrokes();
+        drawInput();
+        queueCreatorPreview();
+      } catch (error) {
+        document.querySelector("#asset-edit-status").textContent = error.message;
+      }
     });
     document.querySelector("#transform-drawing").addEventListener("click", transformDrawing);
 
@@ -3998,6 +5050,29 @@ export function renderHtml(nonce) {
         await saveComposition();
       });
     }
+    for (const id of ["matte-padding", "occlusion-targets"]) {
+      document.querySelector("#" + id).addEventListener("change", async () => {
+        const layer = selectedLayer();
+        if (!layer || layer.type !== "fourier") return;
+        const tokens = document.querySelector("#occlusion-targets").value
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        const layerIds = tokens.filter((value) => !value.startsWith("z:"));
+        const zIndices = tokens
+          .filter((value) => value.startsWith("z:"))
+          .map((value) => Number(value.slice(2)))
+          .filter(Number.isSafeInteger);
+        if (layerIds.length || zIndices.length) {
+          layer.mattePadding = Number(document.querySelector("#matte-padding").value);
+          layer.occludes = { layerIds, zIndices };
+        } else {
+          delete layer.mattePadding;
+          delete layer.occludes;
+        }
+        await saveComposition();
+      });
+    }
     document.querySelector("#copy-asset").addEventListener("click", (event) => {
       if (state.composition) {
         copyText(event.currentTarget, JSON.stringify(state.composition, null, 2));
@@ -4007,6 +5082,7 @@ export function renderHtml(nonce) {
 
     window.addEventListener("resize", () => {
       drawInput();
+      drawCreatorPreview();
       drawAsset();
       renderTimeline();
       drawSeriesSpectrum();

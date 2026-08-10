@@ -104,6 +104,17 @@ test("origin-form canvas requests authorize root, API, mutation, and SSE routes"
             path: "/api/series",
         },
         {
+            method: "PUT",
+            target: "/api/assets/shape",
+            headers: {
+                host: expectedHost,
+                origin: expectedOrigin,
+                "content-type": "application/json",
+                [CAPABILITY_HEADER]: capabilityToken,
+            },
+            path: "/api/assets/shape",
+        },
+        {
             method: "GET",
             target: `/events?token=${capabilityToken}`,
             headers: { host: expectedHost, origin: expectedOrigin },
@@ -139,6 +150,11 @@ test("origin-form canvas requests authorize root, API, mutation, and SSE routes"
     assert.equal(authorizeCanvasRequest(
         { method: "POST", headers: { host: expectedHost, [CAPABILITY_HEADER]: capabilityToken } },
         "/api/series",
+        options,
+    ).error.error, "unsupported_media_type");
+    assert.equal(authorizeCanvasRequest(
+        { method: "PUT", headers: { host: expectedHost, [CAPABILITY_HEADER]: capabilityToken } },
+        "/api/assets/shape",
         options,
     ).error.error, "unsupported_media_type");
 });

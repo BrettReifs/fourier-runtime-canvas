@@ -62,6 +62,28 @@ test("normalizeFrequencyAsset rejects non-integer frequency bins", () => {
     }), /frequency must be an integer/);
 });
 
+test("normalizeFrequencyAsset preserves valid asset identity and revisions", () => {
+    const asset = normalizeFrequencyAsset({
+        id: "stable-asset",
+        format: "fourier-path/v1",
+        name: "Stable asset",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+        revision: 3,
+        strokes: [{
+            closed: true,
+            sampleCount: 64,
+            coefficients: [{ frequency: 1, amplitude: 1, phase: 0 }],
+        }],
+    });
+
+    assert.equal(asset.id, "stable-asset");
+    assert.equal(asset.createdAt, "2026-01-01T00:00:00.000Z");
+    assert.equal(asset.updatedAt, "2026-01-02T00:00:00.000Z");
+    assert.equal(asset.revision, 3);
+    assert.equal(asset.strokes[0].sampleCount, 64);
+});
+
 test("transformDrawing resolves the known dominant coefficient of a unit circle", () => {
     const points = Array.from({ length: 64 }, (_, index) => {
         const angle = (index / 64) * Math.PI * 2;

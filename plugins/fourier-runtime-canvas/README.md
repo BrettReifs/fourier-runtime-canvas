@@ -7,6 +7,15 @@ layers can use animated, padded silhouette assets to occlude selected
 lower-depth layers. Timeline keyframes support pointer drag retiming, grouped
 cross-layer movement, grid snapping, and keyboard steps.
 
+The canvas lands on the active full-bleed scene with playback and scrubbing in
+reach. Edit / Compose reveals the timeline in a desktop side panel or narrow
+bottom sheet. Create opens a session asset library with coefficient-derived
+control geometry beside the live Fourier output. Point and stroke edits save as
+revision-bound updates to the existing asset ID, preserving scene and matte
+references. Learn keeps sine-series fundamentals out of the primary workflow.
+Every editor field gets an accessible info card from one centralized tutorial
+registry with deterministic local demos and reduced-motion fallbacks.
+
 ## Installation
 
 After publication in Awesome Copilot:
@@ -15,9 +24,10 @@ After publication in Awesome Copilot:
 copilot plugin install fourier-runtime-canvas@awesome-copilot
 ```
 
-Open `fourier-runtime-canvas` in Copilot. Use `create_kpi_presentation` and
-`patch_kpi_presentation` for compact responsive presentation work. Use Create
-and the low-level composition actions when a scene needs Fourier path assets.
+Open `fourier-runtime-canvas` in Copilot. The current scene appears first. Use
+`create_kpi_presentation` and `patch_kpi_presentation` for compact responsive
+presentation work. Use Create for new or in-place Fourier asset edits and
+Edit / Compose for layer, matte, and keyframe work.
 If low-level composition editing changes an owned KPI layer, compact patches
 return `semantic_drift` until `sync_kpi_presentation` explicitly reconciles the
 supported edits through history.
@@ -27,10 +37,12 @@ composition state or coefficient arrays.
 
 ## Storage model
 
-Raw pointer points are temporary. The extension stores `fourier-path/v1`
-coefficient assets and hybrid `fourier-composition/v1` timeline data in the
-active workspace. Semantic-only patches update the atomic composition state
-without creating asset files. Runtime HTTP endpoints bind to `127.0.0.1`.
+Raw pointer points and reconstructed control geometry are temporary. Preview
+requests never persist. Stable-ID saves store only revised `fourier-path/v1`
+coefficients and bounded asset history alongside hybrid
+`fourier-composition/v1` timeline data. Semantic-only patches update the atomic
+composition state without creating asset files. Runtime HTTP endpoints bind to
+`127.0.0.1`.
 
 ## Source
 

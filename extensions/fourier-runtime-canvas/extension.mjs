@@ -17,6 +17,10 @@ import {
     transformDrawing,
 } from "./fourier.mjs";
 import {
+    buildAssetPreview,
+    buildAssetUpdate,
+} from "./asset-editor.mjs";
+import {
     COMPOSITION_LIMITS,
     createComposition,
     normalizeComposition,
@@ -225,6 +229,8 @@ const FREQUENCY_ASSET_SCHEMA = {
         format: { const: "fourier-path/v1" },
         name: { type: "string", maxLength: 120 },
         createdAt: { type: "string" },
+        updatedAt: { type: "string" },
+        revision: { type: "integer", minimum: 0 },
         coordinateSystem: { type: "string" },
         strokeCount: { type: "integer", minimum: 1 },
         termLimit: { type: "integer", minimum: 1, maximum: FOURIER_LIMITS.maxAssetTerms },
@@ -877,7 +883,7 @@ function sendRequestError(res, error, fallbackCode, fallbackStatus = 400) {
     }
     const requestStatus = error.code === "body_too_large"
         ? 413
-        : error.code === "stale_revision"
+        : ["stale_revision", "stale_asset_revision"].includes(error.code)
             ? 409
             : typeof error.code === "string" && /^[A-Z]/.test(error.code)
                 ? 500
@@ -1075,12 +1081,26 @@ function assetSummaries(assets) {
             id: asset.id,
             name: asset.name,
             createdAt: asset.createdAt,
+            updatedAt: asset.updatedAt,
+            revision: asset.revision,
             strokeCount: asset.strokeCount,
             termCount: asset.strokes.reduce(
                 (sum, stroke) => sum + stroke.coefficients.length,
                 0,
             ),
         }));
+}
+
+function cloneAssetHistories(histories) {
+    return new Map([...histories].map(([assetId, history]) => [
+        assetId,
+        createHistory(history, history.limit),
+    ]));
+}
+
+function assetHistoryStatus(entry, assetId) {
+    const history = entry.assetHistories.get(assetId) ?? createHistory({}, 8);
+    return { assetId, ...historyStatus(history) };
 }
 
 async function persistAsset(entry, asset) {
@@ -1219,6 +1239,108 @@ async function transformEntry(entry, input) {
     return setAsset(entry, nextAsset);
 }
 
+function broadcastAssetState(entry, assetId) {
+    broadcast(entry, "asset-history", assetHistoryStatus(entry, assetId));
+}
+
+async function commitAssetEdit(entry, assetId, input) {
+    return enqueueMutation(entry.workspacePath, async () => {
+        const current = entry.assets.get(assetId);
+        if (!current) {
+            throw new CanvasError("asset_not_found", `Asset ${assetId} is not available.`);
+        }
+        const { expectedRevision, ...drawing } = input;
+        const result = buildAssetUpdate(current, expectedRevision, drawing);
+        if (!result.changed) return current;
+
+        const nextAssets = new Map(entry.assets);
+        nextAssets.set(assetId, result.asset);
+        for (const target of workspaceEntries(entry)) {
+            validateCompositionComplexity(target.composition, nextAssets);
+            for (const snapshot of [...target.history.undo, ...target.history.redo]) {
+                validateCompositionComplexity(snapshot, nextAssets);
+            }
+        }
+        const nextHistories = cloneAssetHistories(entry.assetHistories);
+        const history = nextHistories.get(assetId) ?? createHistory({}, 8);
+        recordHistory(history, current, result.asset);
+        nextHistories.set(assetId, history);
+        const persisted = await persistAsset(entry, result.asset);
+        await persistCompositionState(entry.composition, entry.history, nextHistories);
+
+        for (const target of workspaceEntries(entry)) {
+            target.asset = result.asset;
+            target.assetFileNames.set(assetId, persisted.fileName);
+            target.assetBytes.set(assetId, persisted.serializedBytes);
+            target.assets.set(assetId, result.asset);
+            target.assetHistories = cloneAssetHistories(nextHistories);
+            broadcast(target, "asset", result.asset);
+            broadcast(target, "assets", assetSummaries(target.assets));
+            broadcastAssetState(target, assetId);
+        }
+        return result.asset;
+    });
+}
+
+function previewAssetEdit(entry, assetId, input) {
+    const current = entry.assets.get(assetId);
+    if (!current) {
+        throw new CanvasError("asset_not_found", `Asset ${assetId} is not available.`);
+    }
+    return buildAssetPreview(current, input);
+}
+
+async function restoreAssetEdit(entry, assetId, expectedRevision, direction) {
+    return enqueueMutation(entry.workspacePath, async () => {
+        const current = entry.assets.get(assetId);
+        if (!current) {
+            throw new CanvasError("asset_not_found", `Asset ${assetId} is not available.`);
+        }
+        if (expectedRevision !== (current.revision ?? 0)) {
+            const error = new CanvasError(
+                "stale_asset_revision",
+                "Asset revision is stale. Reload the canonical asset and retry.",
+            );
+            error.current = { id: assetId, revision: current.revision ?? 0 };
+            throw error;
+        }
+        const nextHistories = cloneAssetHistories(entry.assetHistories);
+        const history = nextHistories.get(assetId) ?? createHistory({}, 8);
+        let snapshot;
+        try {
+            snapshot = direction === "undo"
+                ? undoHistory(history, current)
+                : redoHistory(history, current);
+        } catch {
+            throw new CanvasError(
+                `nothing_to_${direction}`,
+                `There is no asset edit to ${direction}.`,
+            );
+        }
+        const next = normalizeFrequencyAsset({
+            ...snapshot,
+            id: assetId,
+            createdAt: current.createdAt,
+            updatedAt: new Date().toISOString(),
+            revision: (current.revision ?? 0) + 1,
+        });
+        nextHistories.set(assetId, history);
+        const persisted = await persistAsset(entry, next);
+        await persistCompositionState(entry.composition, entry.history, nextHistories);
+        for (const target of workspaceEntries(entry)) {
+            target.asset = next;
+            target.assetFileNames.set(assetId, persisted.fileName);
+            target.assetBytes.set(assetId, persisted.serializedBytes);
+            target.assets.set(assetId, next);
+            target.assetHistories = cloneAssetHistories(nextHistories);
+            broadcast(target, "asset", next);
+            broadcast(target, "assets", assetSummaries(target.assets));
+            broadcastAssetState(target, assetId);
+        }
+        return next;
+    });
+}
+
 async function persistComposition(composition) {
     const directory = await compositionDirectory();
     const bytes = jsonStorageBytes(composition);
@@ -1308,21 +1430,31 @@ function broadcastHistory(entry) {
     broadcast(entry, "history", historyStatus(entry.history));
 }
 
-async function persistCompositionState(composition, history) {
+async function persistCompositionState(composition, history, assetHistories) {
     const directory = await compositionDirectory();
     const historyValue = { undo: history.undo, redo: history.redo };
+    const assetHistoryValue = Object.fromEntries(
+        [...(assetHistories ?? new Map())].map(([assetId, assetHistory]) => [
+            assetId,
+            { undo: assetHistory.undo, redo: assetHistory.redo },
+        ]),
+    );
     const state = {
         version: WORKSPACE_STATE_VERSION,
         composition,
         history: historyValue,
+        assetHistories: assetHistoryValue,
     };
     if (jsonStorageBytes(composition) > MAX_PERSISTED_COMPOSITION_BYTES) {
         throw new Error(
             `Composition exceeds ${MAX_PERSISTED_COMPOSITION_BYTES} persisted bytes.`,
         );
     }
-    if (jsonStorageBytes(historyValue) > MAX_PERSISTED_HISTORY_BYTES) {
-        throw new Error(`Composition history exceeds ${MAX_PERSISTED_HISTORY_BYTES} bytes.`);
+    if (
+        jsonStorageBytes({ history: historyValue, assetHistories: assetHistoryValue })
+        > MAX_PERSISTED_HISTORY_BYTES
+    ) {
+        throw new Error(`Workspace history exceeds ${MAX_PERSISTED_HISTORY_BYTES} bytes.`);
     }
     const bytes = jsonStorageBytes(state);
     if (bytes > MAX_PERSISTED_STATE_BYTES) {
@@ -1392,7 +1524,7 @@ async function commitComposition(entry, expectedRevision, buildNext, options = {
         }
         const changedIds = changedLayerIds(entry.composition, next);
         next.revision = entry.composition.revision + 1;
-        await persistCompositionState(next, nextHistory);
+        await persistCompositionState(next, nextHistory, entry.assetHistories);
         for (const target of workspaceEntries(entry)) {
             target.composition = clone(next);
             target.history = createHistory(nextHistory, nextHistory.limit);
@@ -1486,7 +1618,7 @@ async function undoComposition(entry) {
         validateCompositionComplexity(nextComposition, entry.assets);
         nextComposition.updatedAt = new Date().toISOString();
         nextComposition.revision = entry.composition.revision + 1;
-        await persistCompositionState(nextComposition, nextHistory);
+        await persistCompositionState(nextComposition, nextHistory, entry.assetHistories);
         for (const target of workspaceEntries(entry)) {
             target.composition = clone(nextComposition);
             target.history = createHistory(nextHistory, nextHistory.limit);
@@ -1506,7 +1638,7 @@ async function redoComposition(entry) {
         validateCompositionComplexity(nextComposition, entry.assets);
         nextComposition.updatedAt = new Date().toISOString();
         nextComposition.revision = entry.composition.revision + 1;
-        await persistCompositionState(nextComposition, nextHistory);
+        await persistCompositionState(nextComposition, nextHistory, entry.assetHistories);
         for (const target of workspaceEntries(entry)) {
             target.composition = clone(nextComposition);
             target.history = createHistory(nextHistory, nextHistory.limit);
@@ -1547,6 +1679,7 @@ async function loadWorkspaceState() {
     }
     let composition;
     let history;
+    let assetHistories = new Map();
     try {
         const persistedState = JSON.parse(await readFileBounded(
             join(await compositionDirectory(), "workspace-state.json"),
@@ -1570,6 +1703,34 @@ async function loadWorkspaceState() {
         for (const snapshot of [...history.undo, ...history.redo]) {
             validateCompositionComplexity(snapshot, library.assets);
         }
+        if (
+            persistedState.assetHistories !== undefined
+            && (
+                !persistedState.assetHistories
+                || typeof persistedState.assetHistories !== "object"
+                || Array.isArray(persistedState.assetHistories)
+            )
+        ) {
+            throw new Error("Asset histories must be an object.");
+        }
+        assetHistories = new Map(Object.entries(
+            persistedState.assetHistories ?? {},
+        ).map(([assetId, assetHistory]) => {
+            if (!library.assets.has(assetId)) {
+                throw new Error(`Asset history references unavailable asset ${assetId}.`);
+            }
+            const normalizeSnapshot = (snapshot) => {
+                const normalized = normalizeFrequencyAsset(snapshot);
+                if (normalized.id !== assetId) {
+                    throw new Error(`Asset history identity mismatch for ${assetId}.`);
+                }
+                return normalized;
+            };
+            return [assetId, createHistory({
+                undo: (assetHistory?.undo ?? []).map(normalizeSnapshot),
+                redo: (assetHistory?.redo ?? []).map(normalizeSnapshot),
+            }, 8)];
+        }));
     } catch (error) {
         if (error.code !== "ENOENT") {
             loadErrors.push({
@@ -1583,7 +1744,8 @@ async function loadWorkspaceState() {
             loadErrors,
         );
         history = await loadHistory(library.assets, loadErrors);
-        await persistCompositionState(composition, history);
+        assetHistories = new Map();
+        await persistCompositionState(composition, history, assetHistories);
     }
     return {
         asset,
@@ -1591,6 +1753,7 @@ async function loadWorkspaceState() {
         assetFileNames: library.fileNamesById,
         loadErrors,
         assets: library.assets,
+        assetHistories,
         composition,
         history,
     };
@@ -1601,6 +1764,7 @@ async function startServer(instanceId, initialInput) {
         asset: null,
         assetBytes: new Map(),
         assetFileNames: new Map(),
+        assetHistories: new Map(),
         loadErrors: [],
         assets: new Map(),
         clients: new Set(),
@@ -1663,6 +1827,29 @@ async function startServer(instanceId, initialInput) {
 
         if (req.method === "GET" && url.pathname === "/api/assets") {
             sendJson(res, 200, assetSummaries(entry.assets));
+            return;
+        }
+
+        const assetHistoryMatch = url.pathname.match(
+            /^\/api\/assets\/([^/]+)\/history$/,
+        );
+        if (req.method === "GET" && assetHistoryMatch) {
+            try {
+                const assetId = decodeURIComponent(assetHistoryMatch[1]);
+                if (!entry.assets.has(assetId)) {
+                    sendJson(res, 404, {
+                        error: "asset_not_found",
+                        message: "The requested Fourier asset was not found.",
+                    });
+                    return;
+                }
+                sendJson(res, 200, assetHistoryStatus(entry, assetId));
+            } catch {
+                sendJson(res, 400, {
+                    error: "invalid_asset_id",
+                    message: "The requested Fourier asset ID is not valid URL encoding.",
+                });
+            }
             return;
         }
 
@@ -1791,6 +1978,50 @@ async function startServer(instanceId, initialInput) {
                 sendJson(res, 200, asset);
             } catch (error) {
                 sendRequestError(res, error, "invalid_asset");
+            }
+            return;
+        }
+
+        const assetEditMatch = url.pathname.match(
+            /^\/api\/assets\/([^/]+)(?:\/(preview|undo|redo))?$/,
+        );
+        if (assetEditMatch && ["PUT", "POST"].includes(req.method)) {
+            try {
+                const assetId = decodeURIComponent(assetEditMatch[1]);
+                const action = assetEditMatch[2] ?? "update";
+                const input = await readJson(req);
+                if (action === "preview" && req.method === "POST") {
+                    sendJson(res, 200, previewAssetEdit(entry, assetId, input));
+                    return;
+                }
+                if (action === "update" && req.method === "PUT") {
+                    sendJson(res, 200, await commitAssetEdit(entry, assetId, input));
+                    return;
+                }
+                if (["undo", "redo"].includes(action) && req.method === "POST") {
+                    assertAllowedKeys(
+                        input,
+                        new Set(["expectedRevision"]),
+                        `Asset ${action} request`,
+                    );
+                    sendJson(
+                        res,
+                        200,
+                        await restoreAssetEdit(
+                            entry,
+                            assetId,
+                            input.expectedRevision,
+                            action,
+                        ),
+                    );
+                    return;
+                }
+                sendJson(res, 405, {
+                    error: "method_not_allowed",
+                    message: "The asset edit action does not support this method.",
+                });
+            } catch (error) {
+                sendRequestError(res, error, "invalid_asset_edit");
             }
             return;
         }

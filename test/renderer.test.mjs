@@ -63,7 +63,55 @@ test("renderHtml applies the supplied CSP nonce without embedding runtime values
     assert.doesNotThrow(() => new vm.Script(scripts[0][1]));
     assert(!html.includes("instanceId"));
     assert.match(html, /role="tablist"/);
-    assert.match(html, /<canvas id="drawing">[^<]+<\/canvas>/);
+    assert.match(html, /<canvas id="drawing"[^>]*>[^<]+<\/canvas>/);
+});
+
+test("scene-first shell opens compositions full bleed with editing disclosed", () => {
+    const html = renderHtml("scene-first-nonce");
+    const navigation = html.match(/<nav class="mode-tabs"[\s\S]*?<\/nav>/)?.[0];
+
+    assert(navigation);
+    assert.doesNotMatch(navigation, /Signal runtime/i);
+    assert.match(navigation, />Create</);
+    assert.match(navigation, />Learn</);
+    assert.match(html, /id="asset-view" class="view scene-view" role="tabpanel"/);
+    assert.match(html, /id="scene-editor-disclosure" class="scene-editor"/);
+    assert.doesNotMatch(
+        html.match(/id="scene-editor-disclosure"[\s\S]*?<summary/)?.[0] ?? "",
+        /\sopen(?:\s|>)/,
+    );
+    assert.match(html, /id="edit-scene"/);
+    assert.match(html, /@media \(max-width: 780px\)[\s\S]*\.scene-editor\[open\]/);
+});
+
+test("Creator edits stable assets with transient side-by-side previews", () => {
+    const html = renderHtml("creator-editor-nonce");
+    const script = html.match(
+        /<script nonce="creator-editor-nonce">([\s\S]*?)<\/script>/,
+    )?.[1];
+    const pointerMove = script.match(
+        /canvases\.drawing\.addEventListener\("pointermove", \(event\) => \{([\s\S]*?)\n    \}\);/,
+    )?.[1];
+
+    assert.match(html, /id="creator-asset-library"/);
+    assert.match(html, /id="drawing" tabindex="0"/);
+    assert.match(html, /id="creator-preview"/);
+    assert.match(html, /id="save-asset-edit"/);
+    assert.match(html, /id="undo-asset-edit"/);
+    assert.match(script, /reconstructAssetGeometry\(asset\)/);
+    assert.match(script, /function creatorHasUnsavedChanges\(\)/);
+    assert.match(script, /window\.confirm\("Discard unsaved point and stroke edits\?"\)/);
+    assert.match(script, /\/preview"[\s\S]*method: "POST"/);
+    assert.match(script, /method: "PUT"/);
+    assert.match(script, /ref\.time = focused\.time/);
+    assert(pointerMove);
+    assert.doesNotMatch(pointerMove, /saveCreatorAsset|method: "PUT"/);
+    assert.match(
+        html,
+        /@media \(max-width: 780px\)[\s\S]*\.field-info \{ width: 44px; min-height: 44px; \}/,
+    );
+    assert.match(html, /class="checkbox-field"><input id="asset-closed"/);
+    assert.match(script, /function setMode\(mode\) \{\s+closeFieldTutorial\(\);/);
 });
 
 test("renderer includes native responsive semantic presentation drawing", () => {
@@ -185,7 +233,7 @@ test("semantic initial state and create events select the visible composition vi
     }
 });
 
-test("series-only opens and Fourier-only composition events preserve their view", () => {
+test("series-only input stays educational while any composition opens the scene", () => {
     const fourierOnly = {
         revision: 2,
         layers: [{ type: "fourier", assetId: "mark" }],
@@ -198,8 +246,8 @@ test("series-only opens and Fourier-only composition events preserve their view"
     showRuntimeMode(fourierDocument, selectRuntimeMode("series", fourierOnly));
 
     assert.equal(seriesDocument.views.find(({ id }) => id === "series-view").hidden, false);
-    assert.equal(fourierDocument.views.find(({ id }) => id === "series-view").hidden, false);
-    assert.equal(selectRuntimeMode("asset", fourierOnly), "asset");
+    assert.equal(fourierDocument.views.find(({ id }) => id === "asset-view").hidden, false);
+    assert.equal(selectRuntimeMode("series", fourierOnly), "asset");
 });
 
 test("audio cue crossings fire once at starts, positive crossings, and wraps", () => {

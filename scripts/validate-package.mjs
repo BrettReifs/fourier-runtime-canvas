@@ -8,6 +8,8 @@ const requiredExtensionFiles = [
     "extension.mjs",
     "renderer.mjs",
     "fourier.mjs",
+    "asset-editor.mjs",
+    "field-tutorials.mjs",
     "composition.mjs",
     "history.mjs",
     "instance-lifecycle.mjs",

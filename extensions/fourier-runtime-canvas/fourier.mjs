@@ -230,7 +230,7 @@ function selectCoefficients(coefficients, termLimit, preserveFrequencyPairs) {
         }));
 }
 
-export function transformDrawing(input) {
+export function transformDrawing(input, identity = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
         throw new Error("Drawing input must be an object.");
     }
@@ -328,13 +328,22 @@ export function transformDrawing(input) {
         );
     }
 
+    const createdAt = typeof identity.createdAt === "string"
+        ? identity.createdAt
+        : new Date().toISOString();
     return {
-        id: randomUUID(),
+        id: typeof identity.id === "string" ? identity.id : randomUUID(),
         format: "fourier-path/v1",
         name: typeof input.name === "string" && input.name.trim()
             ? input.name.trim().slice(0, 120)
             : "Untitled Fourier drawing",
-        createdAt: new Date().toISOString(),
+        createdAt,
+        updatedAt: typeof identity.updatedAt === "string"
+            ? identity.updatedAt
+            : createdAt,
+        revision: Number.isSafeInteger(identity.revision) && identity.revision >= 0
+            ? identity.revision
+            : 0,
         coordinateSystem: "normalized-complex",
         strokeCount: transformedStrokes.length,
         termLimit,
@@ -363,6 +372,8 @@ export function normalizeFrequencyAsset(input) {
             "format",
             "name",
             "createdAt",
+            "updatedAt",
+            "revision",
             "coordinateSystem",
             "strokeCount",
             "termLimit",
@@ -414,7 +425,26 @@ export function normalizeFrequencyAsset(input) {
     ) {
         throw new Error("Asset createdAt must be a valid date string of at most 64 characters.");
     }
+    if (
+        input.updatedAt !== undefined
+        && (
+            typeof input.updatedAt !== "string"
+            || input.updatedAt.length > 64
+            || !Number.isFinite(Date.parse(input.updatedAt))
+        )
+    ) {
+        throw new Error("Asset updatedAt must be a valid date string of at most 64 characters.");
+    }
+    if (
+        input.revision !== undefined
+        && (!Number.isSafeInteger(input.revision) || input.revision < 0)
+    ) {
+        throw new Error("Asset revision must be a non-negative safe integer.");
+    }
 
+    const createdAt = typeof input.createdAt === "string"
+        ? input.createdAt
+        : new Date().toISOString();
     const strokes = input.strokes.map((stroke, strokeIndex) => {
         if (
             !stroke
@@ -505,7 +535,9 @@ export function normalizeFrequencyAsset(input) {
         name: typeof input.name === "string" && input.name.trim()
             ? input.name.trim().slice(0, 120)
             : "Untitled Fourier drawing",
-        createdAt: typeof input.createdAt === "string" ? input.createdAt : new Date().toISOString(),
+        createdAt,
+        updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : createdAt,
+        revision: input.revision ?? 0,
         coordinateSystem: "normalized-complex",
         strokeCount: strokes.length,
         termLimit: Math.max(...strokes.map((stroke) => stroke.coefficients.length)),

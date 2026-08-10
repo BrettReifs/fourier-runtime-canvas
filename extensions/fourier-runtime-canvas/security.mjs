@@ -67,7 +67,10 @@ export function authorizeCanvasRequest(req, requestTarget, options) {
     if (authorizationError) {
         return { url, error: authorizationError };
     }
-    if (req.method === "POST" && !hasJsonContentType(req)) {
+    if (
+        !["GET", "HEAD"].includes(req.method)
+        && !hasJsonContentType(req)
+    ) {
         return {
             url,
             error: { status: 415, error: "unsupported_media_type" },

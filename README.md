@@ -17,16 +17,23 @@ benchmarks.
 
 ## What it does
 
-The canvas has three connected workspaces. **Create** captures one or more
-temporary pointer strokes and transforms them into `fourier-path/v1` assets.
-**Compose & animate** combines native semantic presentation layers with Fourier
-assets on one timeline. Semantic scenes provide upright text, a shared chart
+The canvas opens directly into the active scene. Its full-bleed surface keeps
+the scene name, play/pause, scrubber, time, Create, and Edit / Compose visible.
+The layer timeline and field editors stay in a collapsed `See more` panel until
+needed. On narrow screens that panel becomes a touch-sized bottom sheet.
+
+**Create** is a session asset library and in-place element editor. It
+deterministically reconstructs temporary control geometry from stored
+coefficients, places that geometry beside the actual Fourier output, and saves
+edits as a new revision under the existing asset ID. **Edit / Compose** combines
+native semantic presentation layers with Fourier assets on one timeline.
+Semantic scenes provide upright text, a shared chart
 scale, aligned thresholds, explicit palettes, safe areas, responsive aspect
 ratios, deterministic entry animation, accessible summaries, and synthesized
 audio cues. Fourier layers retain transform, opacity, reveal, shape-morph,
 procedural-motion, spectral-audio, and animated occlusion-matte settings.
-**Signal runtime** visualizes live sine-series inputs and exposes a loopback
-script bridge.
+**Learn** preserves the sine-series runtime as secondary education about how
+frequency terms become paths rather than presenting it as a creation mode.
 
 Runtime drawings contain coefficients shaped like
 `{ frequency, amplitude, phase }`. They do not contain raster pixels or the
@@ -45,6 +52,8 @@ flowchart LR
     U --> T[Temporary pointer strokes]
     T --> F[Fourier transform]
     F --> P[Coefficient-only assets]
+    P --> R[Deterministic editable reconstruction]
+    R --> F
     P --> C[Layered compositions]
     P --> W[Workspace storage]
     C --> W
@@ -62,6 +71,8 @@ separate from the transport and renderer.
 | --- | --- |
 | `extension.mjs` | Copilot actions, schemas, loopback HTTP/SSE, persistence, lifecycle |
 | `fourier.mjs` | Path validation, normalization, resampling, DFT, coefficient selection |
+| `asset-editor.mjs` | Deterministic coefficient reconstruction, control selection, safe edits, stable revision planning |
+| `field-tutorials.mjs` | Typed field education registry, deterministic demo definitions, local frame cache |
 | `composition.mjs` | Hybrid semantic/Fourier layer, keyframe, matte, motion, audio, and aggregate-limit normalization |
 | `presentation.mjs` | Typed KPI creation and patching, compact summaries, and responsive layout math |
 | `history.mjs` | Bounded semantic undo and redo snapshots |
@@ -73,8 +84,8 @@ separate from the transport and renderer.
 
 | Surface | Current capability |
 | --- | --- |
-| Drawing | Multi-stroke input, open or closed paths, configurable coefficient limits |
-| Frequency assets | Normalized complex coefficients with no retained source points |
+| Creator | Session asset library, point/stroke selection, keyboard nudging, topology editing, side-by-side live preview |
+| Frequency assets | Normalized complex coefficients, stable identity, revision conflict checks, bounded asset edit history |
 | Composition | Up to 64 layers and 128 keyframes per layer |
 | Semantic presentation | Native text, shared-scale KPI bars, axes, thresholds, safe areas, and explicit palettes |
 | Responsive layout | Persisted 16:9, 4:3, or 9:16 scene fitted safely into wide and narrow viewports |
@@ -84,8 +95,9 @@ separate from the transport and renderer.
 | Motion | Optional procedural line movement that does not alter stored coefficients |
 | Audio | Short Web Audio cues derived from strong stored frequency bins |
 | Automation | Agent actions plus JSON HTTP endpoints and live SSE updates |
-| Recovery | Persisted composition state with bounded undo and redo history |
-| Accessibility | Keyboard movement, focus styles, responsive layout, reduced-motion handling |
+| Recovery | Separate bounded undo and redo for composition changes and in-place asset revisions |
+| Education | Accessible field info cards with cached local demos and a secondary Learn surface |
+| Accessibility | Keyboard movement, 44px narrow-layout controls, focus return, responsive drawers, reduced-motion handling |
 
 ## Install and run
 
@@ -123,10 +135,10 @@ Awesome Copilot plugin is published, installation is expected to be:
 copilot plugin install fourier-runtime-canvas@awesome-copilot
 ```
 
-Open the canvas by asking Copilot to open `fourier-runtime-canvas`. A useful
-first flow is to draw a closed shape in Create, transform it with 32 to 64
-components, switch to Compose & animate, and add a second shape as a morph
-target.
+Open the canvas by asking Copilot to open `fourier-runtime-canvas`. An existing
+composition opens directly as the scene. Press Play or scrub first, open
+Edit / Compose for layers and keyframes, or open Create to revise an asset
+without changing its ID. Learn contains the signal and Fourier fundamentals.
 
 ## Agent actions
 
@@ -189,6 +201,29 @@ and phase values. `get_frequency_asset`, `list_frequency_assets`,
 `load_frequency_asset`, `get_composition`, `update_composition`,
 `undo_composition`, `redo_composition`, and `get_bridge_info` support the rest
 of the workflow.
+
+### Scene-first Creator
+
+Create lists the workspace assets once by stable ID. Selecting an asset
+reconstructs a bounded control-point model from its coefficients and
+`sampleCount`; it does not recover or persist the original pointer path. The
+left canvas selects strokes and points. Pointer drag or arrow keys move selected
+points, Shift increases the keyboard step, Delete removes safe selections, and
+the closed-path control changes topology. The right canvas overlays the saved
+revision and the current Fourier preview.
+
+Pointer movement updates browser geometry and a non-persistent loopback preview.
+Save sends one revision-bound update. An unchanged save is a no-op. A successful
+save keeps `asset.id` and `createdAt`, increments `revision`, and therefore
+updates every visible and matte layer that already references that ID. Asset
+Undo and Redo use a separate bounded history. A stale expected revision returns
+`stale_asset_revision` rather than overwriting another edit.
+
+Each editable field receives its info button from `field-tutorials.mjs`. The
+registry stores the title, plain-language purpose, use case, tradeoffs, and a
+deterministic local mini-scene definition. Repeated cards reuse cached frames.
+Reduced-motion users receive a static before/current comparison. Opening a card
+does not pause or mutate the scene, create an asset, or write history.
 
 ### Animated occlusion mattes
 
@@ -294,6 +329,11 @@ connection URL because the browser API cannot set custom headers.
 | `GET`, `POST` | `/api/asset` | Read or replace the active frequency asset |
 | `GET` | `/api/assets` | List stored frequency assets |
 | `GET` | `/api/assets/:id` | Read one stored frequency asset |
+| `POST` | `/api/assets/:id/preview` | Transform reconstructed points for preview without persistence or revision changes |
+| `PUT` | `/api/assets/:id` | Atomically update an existing asset with `expectedRevision` while retaining its ID |
+| `GET` | `/api/assets/:id/history` | Read asset edit Undo/Redo availability |
+| `POST` | `/api/assets/:id/undo` | Undo one asset edit with an expected revision |
+| `POST` | `/api/assets/:id/redo` | Redo one asset edit with an expected revision |
 | `GET`, `POST` | `/api/composition` | Read or replace the active composition |
 | `GET` | `/api/history` | Read undo and redo availability |
 | `POST` | `/api/history/undo` | Undo the last semantic composition change |
@@ -322,9 +362,10 @@ Invoke-RestMethod -Method Post `
 
 ## Privacy and storage
 
-Raw pointer coordinates exist in the browser only while a drawing is being
-edited and while its transform request is processed. After a successful
-transform, the browser clears those points. The extension persists
+Raw pointer coordinates and coefficient-derived Creator control points exist
+only while an edit or transform request is processed. Preview and update
+requests may carry those temporary points over the authenticated loopback
+connection, but the extension persists
 coefficient assets under `fourier-assets/` and hybrid compositions plus history
 under `fourier-compositions/` inside the active Copilot workspace. Semantic
 layers are composition data and do not create frequency asset files.
@@ -361,15 +402,16 @@ scene budgets include distinct matte morph assets. The renderer shares a
 12,000-sample frame budget across visible layers and builds
 morph frequency maps once per stroke rather than once per sample. Coordinates,
 imported frequency bins, coefficient amplitudes, phases, and live-series
-numeric values have explicit magnitude ceilings. History keeps 50 semantic
-snapshots and is capped at 8 MB. Persistent writes are atomic and serialized
-per workspace; composition revisions reject stale concurrent writes. SSE is
+numeric values have explicit magnitude ceilings. Composition history keeps 50
+semantic snapshots. Each asset keeps up to eight edit snapshots, with all
+workspace history capped at 8 MB. Persistent writes are atomic and serialized
+per workspace; composition and asset revisions reject stale concurrent writes. SSE is
 limited to eight clients per instance and disconnects clients that apply
 backpressure.
 
 This is an experiment, not a general vector editor, video renderer, audio
 workstation, or compression benchmark. It currently has no collaborative
-editing, export-to-video pipeline, Bézier authoring, GPU reconstruction,
+editing, export-to-video pipeline, Bézier handles, GPU reconstruction,
 cross-workspace asset catalog, user-identity authentication, or formal
 compatibility guarantee for the two JSON formats. The DFT remains synchronous
 inside its strict operation budget. Moving transforms to a worker thread is a
