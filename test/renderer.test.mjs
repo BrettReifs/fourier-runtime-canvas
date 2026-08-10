@@ -125,6 +125,47 @@ test("renderer wires offscreen matte compositing and accessible grouped keyframe
     assert.match(html, /id="key-time"/);
 });
 
+test("renderer wires thresholded pointer previews and one-save keyframe retiming", () => {
+    const html = renderHtml("retime-renderer-nonce");
+    const script = html.match(
+        /<script nonce="retime-renderer-nonce">([\s\S]*?)<\/script>/,
+    )?.[1];
+    const preview = script.match(
+        /function previewKeyframeDrag\(event\) \{([\s\S]*?)\n    \}\n\n    async function finishKeyframeDrag/,
+    )?.[1];
+    const finish = script.match(
+        /async function finishKeyframeDrag\(event\) \{([\s\S]*?)\n    \}\n\n    function cancelKeyframeDrag/,
+    )?.[1];
+    const cancel = script.match(
+        /function cancelKeyframeDrag\(\) \{([\s\S]*?)\n    \}\n\n    async function retimeKeyframesFromKeyboard/,
+    )?.[1];
+    const keyboard = script.match(
+        /async function retimeKeyframesFromKeyboard\(event, ref\) \{([\s\S]*?)\n    \}\n\n    function renderTimeline/,
+    )?.[1];
+
+    assert(preview);
+    assert(finish);
+    assert(cancel);
+    assert(keyboard);
+    assert.match(script, /setPointerCapture\(event\.pointerId\)/);
+    assert.match(script, /pointercancel[\s\S]*cancelKeyframeDrag/);
+    assert.match(script, /keyframeDragActivated\(distance\)/);
+    assert.match(script, /snap: !event\.altKey/);
+    assert.match(script, /keyboardKeyframeDelta\(event\.key, event\.shiftKey\)/);
+    assert.match(preview, /planKeyframeRetime/);
+    assert.match(preview, /state\.selectedLayerId = drag\.ref\.layerId/);
+    assert.doesNotMatch(preview, /saveComposition/);
+    assert.match(finish, /if \(!drag\.active \|\| !drag\.preview\) return/);
+    assert.match(finish, /await saveComposition\(\)/);
+    assert.match(cancel, /state\.keyframeDrag = null/);
+    assert.match(cancel, /renderTimeline\(\)/);
+    assert.doesNotMatch(cancel, /saveComposition|state\.composition\.layers\s*=/);
+    assert.match(keyboard, /state\.selectedLayerId = ref\.layerId/);
+    assert.match(keyboard, /ref\.time = focused\.time/);
+    assert.match(keyboard, /await saveComposition\(\)/);
+    assert.match(html, /id="keyframe-retime-status" aria-live="polite"/);
+});
+
 test("semantic initial state and create events select the visible composition view", () => {
     const semantic = {
         revision: 3,

@@ -261,6 +261,134 @@ export function deleteKeyframeRefs(layers, selected) {
     return next;
 }
 
+export function planKeyframeRetime(
+    layers,
+    selected,
+    requestedDelta,
+    options,
+) {
+    const duration = options.duration;
+    const snapStep = options.snapStep ?? 0.01;
+    const minimumGap = options.minimumGap ?? 0.01;
+    const isSelected = (layerId, time) => selected.some((ref) => (
+        sameKeyframeRef(ref, { layerId, time })
+    ));
+    const selectedKeyframes = layers.flatMap((layer) => (
+        layer.keyframes
+            .filter((keyframe) => isSelected(layer.id, keyframe.time))
+            .map((keyframe) => ({ keyframe, layer }))
+    ));
+    if (!selectedKeyframes.length || !Number.isFinite(requestedDelta)) {
+        return {
+            delta: 0,
+            layers: structuredClone(layers),
+            selected: structuredClone(selected),
+        };
+    }
+
+    const snapAnchorTime = options.anchorTime
+        ?? selectedKeyframes[0].keyframe.time;
+    let minimumDelta = -Math.min(
+        ...selectedKeyframes.map(({ keyframe }) => keyframe.time),
+    );
+    let maximumDelta = duration - Math.max(
+        ...selectedKeyframes.map(({ keyframe }) => keyframe.time),
+    );
+
+    for (const { keyframe, layer } of selectedKeyframes) {
+        const unselected = layer.keyframes.filter((candidate) => (
+            !isSelected(layer.id, candidate.time)
+        ));
+        for (const candidate of unselected) {
+            if (candidate.time < keyframe.time) {
+                const gap = Math.min(
+                    minimumGap,
+                    keyframe.time - candidate.time,
+                );
+                minimumDelta = Math.max(
+                    minimumDelta,
+                    candidate.time + gap - keyframe.time,
+                );
+            }
+            if (candidate.time > keyframe.time) {
+                const gap = Math.min(
+                    minimumGap,
+                    candidate.time - keyframe.time,
+                );
+                maximumDelta = Math.min(
+                    maximumDelta,
+                    candidate.time - gap - keyframe.time,
+                );
+            }
+        }
+    }
+
+    let constrainedDelta;
+    if (options.snap === false || requestedDelta === 0) {
+        constrainedDelta = Math.min(
+            maximumDelta,
+            Math.max(minimumDelta, requestedDelta),
+        );
+    } else {
+        const requestedTarget = snapAnchorTime + requestedDelta;
+        const directionalMinimum = requestedDelta > 0
+            ? Math.max(snapAnchorTime, snapAnchorTime + minimumDelta)
+            : snapAnchorTime + minimumDelta;
+        const directionalMaximum = requestedDelta < 0
+            ? Math.min(snapAnchorTime, snapAnchorTime + maximumDelta)
+            : snapAnchorTime + maximumDelta;
+        const minimumGridIndex = Math.ceil(
+            (directionalMinimum - 1e-12) / snapStep,
+        );
+        const maximumGridIndex = Math.floor(
+            (directionalMaximum + 1e-12) / snapStep,
+        );
+        if (minimumGridIndex <= maximumGridIndex) {
+            const requestedGridIndex = Math.round(requestedTarget / snapStep);
+            const gridIndex = Math.min(
+                maximumGridIndex,
+                Math.max(minimumGridIndex, requestedGridIndex),
+            );
+            constrainedDelta = gridIndex * snapStep - snapAnchorTime;
+        } else {
+            constrainedDelta = 0;
+        }
+    }
+    const delta = Math.abs(constrainedDelta) < 1e-12 ? 0 : constrainedDelta;
+    const movedTime = (time) => Math.min(
+        duration,
+        Math.max(0, time + delta),
+    );
+    const nextLayers = structuredClone(layers);
+    for (const layer of nextLayers) {
+        for (const keyframe of layer.keyframes) {
+            if (isSelected(layer.id, keyframe.time)) {
+                keyframe.time = movedTime(keyframe.time);
+            }
+        }
+        layer.keyframes.sort((left, right) => left.time - right.time);
+    }
+    return {
+        delta,
+        layers: nextLayers,
+        selected: selected.map((ref) => ({
+            ...ref,
+            time: movedTime(ref.time),
+        })),
+    };
+}
+
+export function keyframeDragActivated(distance, threshold = 4) {
+    return Number.isFinite(distance) && distance >= threshold;
+}
+
+export function keyboardKeyframeDelta(key, largeStep = false) {
+    const step = largeStep ? 0.1 : 0.01;
+    if (key === "ArrowLeft") return -step;
+    if (key === "ArrowRight") return step;
+    return null;
+}
+
 export function renderHtml(nonce) {
     return `<!doctype html>
 <html lang="en">
@@ -517,6 +645,7 @@ export function renderHtml(nonce) {
       height: 24px;
       border-radius: 5px;
       background: color-mix(in srgb, var(--border-color-default, #30363d) 42%, transparent);
+      touch-action: none;
     }
     .track-block {
       position: absolute;
@@ -534,6 +663,8 @@ export function renderHtml(nonce) {
       padding: 0;
       border: 1px solid var(--background-color-default, #0d1117);
       background: var(--accent);
+      cursor: ew-resize;
+      touch-action: none;
       transform: translate(-50%, -50%) rotate(45deg);
     }
     .keyframe-dot.selected {
@@ -544,6 +675,21 @@ export function renderHtml(nonce) {
     .keyframe-dot:focus-visible {
       outline: 2px solid var(--text-color-default, #e6edf3);
       outline-offset: 3px;
+    }
+    .keyframe-dot.drag-preview {
+      z-index: 3;
+      opacity: .82;
+      box-shadow: 0 0 0 4px var(--accent-muted);
+    }
+    .keyframe-drag-origin {
+      position: absolute;
+      top: 50%;
+      width: 8px;
+      height: 8px;
+      border: 1px dashed var(--text-color-muted, #8b949e);
+      background: transparent;
+      pointer-events: none;
+      transform: translate(-50%, -50%) rotate(45deg);
     }
     .audio-cue-dot {
       position: absolute;
@@ -792,7 +938,8 @@ export function renderHtml(nonce) {
           <label><input id="show-epicycles" type="checkbox"> Epicycles</label>
         </div>
         <output id="keyframe-selection-status" aria-live="polite">No keyframes selected</output>
-        <p>Click a diamond to select. Ctrl/Cmd-click toggles; Shift-click selects a range within one layer.</p>
+        <output id="keyframe-retime-status" aria-live="polite"></output>
+        <p>Click a diamond to select. Drag to retime; Alt disables 0.01s snapping. Ctrl/Cmd-click toggles; Shift-click selects a range within one layer.</p>
         <div class="timeline-ruler"><span>Layers</span><span>0s</span></div>
         <div id="timeline-tracks"></div>
       </section>
@@ -965,6 +1112,9 @@ export function renderHtml(nonce) {
       selectedLayerId: null,
       selectedKeyframes: [],
       keyframeAnchor: null,
+      keyframeDrag: null,
+      suppressKeyframeClick: false,
+      pendingKeyframeFocus: null,
       layerGeometry: new Map(),
       layerSurfacePool: new Map(),
       matteSurfacePool: new Map(),
@@ -1043,7 +1193,7 @@ export function renderHtml(nonce) {
       {
         section: "Timing",
         title: "Arrange entrances on the timeline",
-        body: "Each track has a visible start and end. Diamonds mark keyframes and gold dots mark spectral sound cues. Click a diamond to select it, Ctrl/Cmd-click to toggle, or Shift-click for a same-layer range.",
+        body: "Each track has a visible start and end. Diamonds mark keyframes and gold dots mark spectral sound cues. Drag a diamond to retime it, Ctrl/Cmd-click to toggle, or Shift-click for a same-layer range.",
         action: "Click Play once to unlock sound. Each cue uses the selected layer’s strongest stored sine frequencies.",
         mode: "asset",
         target: ".timeline",
@@ -1052,7 +1202,7 @@ export function renderHtml(nonce) {
         section: "Keyframes",
         title: "Morph the layer state",
         body: "Click a visible layer to select it, then drag it into place. Choose a different Shape on another keyframe to morph by interpolating the assets’ complex frequency coefficients.",
-        action: "Mixed fields stay blank until edited. Grouped saves and deletes are one undoable history change. Arrow keys provide precise nudging.",
+        action: "Grouped drags preview without saving until release. Alt disables the 0.01-second grid; focused diamonds use Left/Right arrows, with Shift for larger steps.",
         mode: "asset",
         target: "#layer-editor:not([hidden]), #layer-empty:not([hidden])",
       },
@@ -1743,6 +1893,9 @@ export function renderHtml(nonce) {
     ${mixedKeyframeFields.toString()}
     ${applyKeyframePatch.toString()}
     ${deleteKeyframeRefs.toString()}
+    ${planKeyframeRetime.toString()}
+    ${keyframeDragActivated.toString()}
+    ${keyboardKeyframeDelta.toString()}
     const evaluateLayer = evaluateFourierLayer;
 
     function mapAssetPoint(point, width, height, transform, originX = 0, originY = 0) {
@@ -2645,14 +2798,212 @@ export function renderHtml(nonce) {
       });
     }
 
+    function keyframeDotForRef(ref) {
+      return [...document.querySelectorAll(".keyframe-dot")].find((dot) => (
+        dot.dataset.layerId === ref.layerId
+        && Number(dot.dataset.keyframeTime) === ref.time
+      )) ?? null;
+    }
+
+    function updateKeyframeSelectionState() {
+      document.querySelectorAll(".keyframe-dot").forEach((dot) => {
+        const ref = {
+          layerId: dot.dataset.layerId,
+          time: Number(dot.dataset.keyframeTime),
+        };
+        const selected = state.selectedKeyframes.some(
+          (candidate) => sameKeyframeRef(candidate, ref)
+        );
+        dot.classList.toggle("selected", selected);
+        dot.setAttribute("aria-pressed", String(selected));
+      });
+      const selectionCount = state.selectedKeyframes.length;
+      document.querySelector("#keyframe-selection-status").textContent =
+        selectionCount === 0
+          ? "No keyframes selected"
+          : selectionCount + " keyframe" + (selectionCount === 1 ? "" : "s") + " selected";
+    }
+
+    function addKeyframeDragOrigins(selected) {
+      for (const ref of selected) {
+        const dot = keyframeDotForRef(ref);
+        if (!dot) continue;
+        const origin = document.createElement("span");
+        origin.className = "keyframe-drag-origin";
+        origin.style.left = dot.style.left;
+        origin.setAttribute("aria-hidden", "true");
+        dot.parentElement.append(origin);
+      }
+    }
+
+    function clearKeyframeDragVisuals() {
+      document.querySelectorAll(".keyframe-drag-origin").forEach(
+        (origin) => origin.remove()
+      );
+      document.querySelectorAll(".keyframe-dot.drag-preview").forEach(
+        (dot) => dot.classList.remove("drag-preview")
+      );
+      document.querySelector("#keyframe-retime-status").textContent = "";
+    }
+
+    function beginKeyframeDrag(event, dot, ref) {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (state.keyframeDrag) return;
+      state.suppressKeyframeClick = false;
+      dot.setPointerCapture(event.pointerId);
+      state.keyframeDrag = {
+        pointerId: event.pointerId,
+        dot,
+        ref,
+        startX: event.clientX,
+        laneWidth: Math.max(1, dot.parentElement.getBoundingClientRect().width),
+        selectionModifier: event.ctrlKey || event.metaKey || event.shiftKey,
+        active: false,
+        selection: [],
+        originalLayers: null,
+        preview: null,
+      };
+    }
+
+    function previewKeyframeDrag(event) {
+      const drag = state.keyframeDrag;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const distance = Math.abs(event.clientX - drag.startX);
+      if (!drag.active) {
+        if (drag.selectionModifier || !keyframeDragActivated(distance)) return;
+        drag.active = true;
+        if (!state.selectedKeyframes.some((ref) => sameKeyframeRef(ref, drag.ref))) {
+          state.selectedKeyframes = [drag.ref];
+          state.keyframeAnchor = drag.ref;
+        }
+        state.selectedLayerId = drag.ref.layerId;
+        drag.selection = structuredClone(state.selectedKeyframes);
+        drag.originalLayers = structuredClone(state.composition.layers);
+        addKeyframeDragOrigins(drag.selection);
+        updateKeyframeSelectionState();
+        syncLayerEditor();
+        state.compositionPlaying = false;
+        document.querySelector("#asset-play").textContent = "Play";
+      }
+      event.preventDefault();
+
+      const requestedDelta =
+        ((event.clientX - drag.startX) / drag.laneWidth) * state.composition.duration;
+      drag.preview = planKeyframeRetime(
+        drag.originalLayers,
+        drag.selection,
+        requestedDelta,
+        {
+          duration: state.composition.duration,
+          snap: !event.altKey,
+          anchorTime: drag.ref.time,
+        }
+      );
+      drag.selection.forEach((ref, index) => {
+        const dot = keyframeDotForRef(ref);
+        const previewRef = drag.preview.selected[index];
+        if (!dot || !previewRef) return;
+        dot.style.left =
+          (previewRef.time / state.composition.duration * 100) + "%";
+        dot.classList.add("drag-preview");
+      });
+      const sign = drag.preview.delta > 0 ? "+" : "";
+      document.querySelector("#keyframe-retime-status").textContent =
+        "Preview " + drag.selection.length + " keyframe" +
+        (drag.selection.length === 1 ? "" : "s") + " · " +
+        sign + drag.preview.delta.toFixed(3) + "s · " +
+        (event.altKey ? "free movement" : "0.01s grid");
+    }
+
+    async function finishKeyframeDrag(event) {
+      const drag = state.keyframeDrag;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (drag.dot.hasPointerCapture(event.pointerId)) {
+        drag.dot.releasePointerCapture(event.pointerId);
+      }
+      state.keyframeDrag = null;
+      if (!drag.active || !drag.preview) return;
+
+      event.preventDefault();
+      state.suppressKeyframeClick = true;
+      state.composition.layers = drag.preview.layers;
+      state.selectedKeyframes = drag.preview.selected;
+      state.keyframeAnchor = drag.preview.selected.at(-1) ?? null;
+      const draggedIndex = drag.selection.findIndex(
+        (ref) => sameKeyframeRef(ref, drag.ref)
+      );
+      state.pendingKeyframeFocus = drag.preview.selected[draggedIndex] ?? null;
+      clearKeyframeDragVisuals();
+      await saveComposition();
+    }
+
+    function cancelKeyframeDrag() {
+      const drag = state.keyframeDrag;
+      if (!drag) return false;
+      if (drag.dot.hasPointerCapture(drag.pointerId)) {
+        drag.dot.releasePointerCapture(drag.pointerId);
+      }
+      state.keyframeDrag = null;
+      state.suppressKeyframeClick = true;
+      if (drag.active) {
+        clearKeyframeDragVisuals();
+        renderTimeline();
+        syncLayerEditor();
+      }
+      return true;
+    }
+
+    async function retimeKeyframesFromKeyboard(event, ref) {
+      const delta = keyboardKeyframeDelta(event.key, event.shiftKey);
+      if (delta === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.repeat) return;
+      state.selectedLayerId = ref.layerId;
+      if (!state.selectedKeyframes.some((selected) => sameKeyframeRef(selected, ref))) {
+        state.selectedKeyframes = [ref];
+        state.keyframeAnchor = ref;
+      }
+      const planned = planKeyframeRetime(
+        state.composition.layers,
+        state.selectedKeyframes,
+        delta,
+        { duration: state.composition.duration, snap: false }
+      );
+      if (planned.delta === 0) {
+        document.querySelector("#keyframe-retime-status").textContent =
+          "Keyframe selection is at its retiming limit.";
+        return;
+      }
+      state.composition.layers = planned.layers;
+      state.selectedKeyframes = planned.selected;
+      state.keyframeAnchor = planned.selected.at(-1) ?? null;
+      const focusedIndex = planned.selected.findIndex((selected) => (
+        selected.layerId === ref.layerId
+        && selected.time === Math.min(
+          state.composition.duration,
+          Math.max(0, ref.time + planned.delta)
+        )
+      ));
+      const focused = planned.selected[focusedIndex] ?? null;
+      state.pendingKeyframeFocus = focused;
+      if (focused) {
+        ref.time = focused.time;
+      }
+      await saveComposition();
+    }
+
     function renderTimeline() {
       const container = document.querySelector("#timeline-tracks");
-      const focusedKeyframe = document.activeElement?.classList.contains("keyframe-dot")
+      const focusedKeyframe = state.pendingKeyframeFocus ?? (
+        document.activeElement?.classList.contains("keyframe-dot")
         ? {
             layerId: document.activeElement.dataset.layerId,
             time: document.activeElement.dataset.keyframeTime,
           }
-        : null;
+        : null
+      );
+      state.pendingKeyframeFocus = null;
       container.replaceChildren();
       if (!state.composition) return;
       for (const layer of [...state.composition.layers].sort(
@@ -2698,6 +3049,11 @@ export function renderHtml(nonce) {
           dot.setAttribute("aria-pressed", String(selected));
           dot.addEventListener("click", (event) => {
             event.stopPropagation();
+            if (state.suppressKeyframeClick && event.detail !== 0) {
+              state.suppressKeyframeClick = false;
+              return;
+            }
+            state.suppressKeyframeClick = false;
             state.selectedLayerId = layer.id;
             const result = selectKeyframeRefs(
               state.selectedKeyframes,
@@ -2713,6 +3069,19 @@ export function renderHtml(nonce) {
             state.keyframeAnchor = result.anchor;
             setCompositionTime(keyframe.time);
             renderTimeline();
+          });
+          dot.addEventListener("pointerdown", (event) => {
+            beginKeyframeDrag(event, dot, ref);
+          });
+          dot.addEventListener("pointermove", (event) => {
+            previewKeyframeDrag(event);
+          });
+          dot.addEventListener("pointerup", finishKeyframeDrag);
+          dot.addEventListener("pointercancel", () => {
+            cancelKeyframeDrag();
+          });
+          dot.addEventListener("keydown", (event) => {
+            retimeKeyframesFromKeyboard(event, ref);
           });
           lane.append(dot);
         }
@@ -2749,15 +3118,11 @@ export function renderHtml(nonce) {
         });
         container.append(track);
       }
-      const selectionCount = state.selectedKeyframes.length;
-      document.querySelector("#keyframe-selection-status").textContent =
-        selectionCount === 0
-          ? "No keyframes selected"
-          : selectionCount + " keyframe" + (selectionCount === 1 ? "" : "s") + " selected";
+      updateKeyframeSelectionState();
       if (focusedKeyframe) {
         [...container.querySelectorAll(".keyframe-dot")].find((dot) => (
           dot.dataset.layerId === focusedKeyframe.layerId
-          && dot.dataset.keyframeTime === focusedKeyframe.time
+          && dot.dataset.keyframeTime === String(focusedKeyframe.time)
         ))?.focus();
       }
       updateTimelinePlayhead();
@@ -3249,6 +3614,11 @@ export function renderHtml(nonce) {
     document.addEventListener("keydown", async (event) => {
       if (!document.querySelector("#tour-overlay").hidden) return;
       if (state.mode !== "asset") return;
+      if (event.key === "Escape" && state.keyframeDrag) {
+        event.preventDefault();
+        cancelKeyframeDrag();
+        return;
+      }
       if (["INPUT", "SELECT", "BUTTON", "TEXTAREA"].includes(event.target.tagName)) return;
       if (event.key === "Escape" && state.selectedKeyframes.length) {
         event.preventDefault();

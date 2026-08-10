@@ -259,6 +259,20 @@ the selection while untouched mixed fields remain unchanged. For grouped
 timing, Time / group start moves the earliest selected keyframe to the entered
 time and preserves the spacing between selected keyframes.
 
+Drag any diamond horizontally to select and retime it. Dragging any member of
+an existing multi-selection moves the full group across layers while preserving
+relative spacing. Drag activation pauses playback. The preview snaps to a
+`0.01s` grid; hold Alt or Option for free movement. Timeline bounds and adjacent
+unselected keyframes constrain the group, so a drag cannot leave the
+composition or cross another keyframe.
+Pointer movement only updates ghosts and the delta readout. Releasing commits
+one history entry; Escape or pointer cancellation restores the original times.
+Mouse, touch, and pen use the same pointer-capture path.
+
+With a keyframe button focused, ArrowLeft and ArrowRight retime the current
+selection by `0.01s`. Hold Shift for a `0.10s` step. Each key press commits one
+undoable composition update.
+
 Click empty track space or press Escape to clear selection. Delete or Backspace,
 or the visible Delete button, removes the selected keyframes while retaining at
 least one keyframe per Fourier layer. Each grouped save or deletion is one
