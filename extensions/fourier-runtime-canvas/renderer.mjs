@@ -28,6 +28,239 @@ export function showRuntimeMode(document, mode) {
     });
 }
 
+function easeFourierValue(value, easing) {
+    if (easing === "linear") return value;
+    if (easing === "ease-in") return value * value;
+    if (easing === "ease-out") return 1 - (1 - value) * (1 - value);
+    return value < 0.5
+        ? 2 * value * value
+        : 1 - ((-2 * value + 2) ** 2) / 2;
+}
+
+export function evaluateFourierLayer(layer, time) {
+    const defaults = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, reveal: 1 };
+    const resolved = (keyframe = {}) => {
+        const assetId = keyframe.assetId ?? layer.assetId;
+        const matteAssetId = (
+            keyframe.matteAssetId
+            ?? layer.matteAssetId
+            ?? assetId
+        );
+        return {
+            ...defaults,
+            ...keyframe,
+            assetId,
+            matteAssetId,
+            morph: { fromAssetId: assetId, toAssetId: assetId, amount: 0 },
+            matteMorph: {
+                fromAssetId: matteAssetId,
+                toAssetId: matteAssetId,
+                amount: 0,
+            },
+        };
+    };
+    if (!layer.keyframes?.length) return resolved();
+    if (time <= layer.keyframes[0].time) return resolved(layer.keyframes[0]);
+    if (time >= layer.keyframes.at(-1).time) return resolved(layer.keyframes.at(-1));
+    const rightIndex = layer.keyframes.findIndex((keyframe) => keyframe.time >= time);
+    const left = resolved(layer.keyframes[rightIndex - 1]);
+    const right = resolved(layer.keyframes[rightIndex]);
+    const span = Math.max(0.0001, right.time - left.time);
+    const amount = easeFourierValue((time - left.time) / span, right.easing);
+    return {
+        time,
+        x: left.x + (right.x - left.x) * amount,
+        y: left.y + (right.y - left.y) * amount,
+        scale: left.scale + (right.scale - left.scale) * amount,
+        rotation: left.rotation + (right.rotation - left.rotation) * amount,
+        opacity: left.opacity + (right.opacity - left.opacity) * amount,
+        reveal: left.reveal + (right.reveal - left.reveal) * amount,
+        assetId: amount < 0.5 ? left.assetId : right.assetId,
+        matteAssetId: amount < 0.5 ? left.matteAssetId : right.matteAssetId,
+        morph: {
+            fromAssetId: left.assetId,
+            toAssetId: right.assetId,
+            amount,
+        },
+        matteMorph: {
+            fromAssetId: left.matteAssetId,
+            toAssetId: right.matteAssetId,
+            amount,
+        },
+        easing: right.easing,
+    };
+}
+
+export function resolveOccludedLayerIds(owner, layers) {
+    if (!owner.occludes) return [];
+    const selectedIds = new Set(owner.occludes.layerIds ?? []);
+    const selectedZIndices = new Set(owner.occludes.zIndices ?? []);
+    return layers
+        .filter((layer) => (
+            layer.id !== owner.id
+            && layer.zIndex < owner.zIndex
+            && (
+                selectedIds.has(layer.id)
+                || selectedZIndices.has(layer.zIndex)
+            )
+        ))
+        .sort((left, right) => left.zIndex - right.zIndex)
+        .map((layer) => layer.id);
+}
+
+export function applyOcclusionMattes(layers, layerSurfaces, matteSurfaces) {
+    for (const owner of layers) {
+        const matte = matteSurfaces.get(owner.id);
+        if (!matte) continue;
+        for (const targetId of resolveOccludedLayerIds(owner, layers)) {
+            const target = layerSurfaces.get(targetId);
+            if (!target) continue;
+            target.context.save();
+            target.context.globalCompositeOperation = "destination-out";
+            target.context.drawImage(
+                matte.canvas,
+                0,
+                0,
+                target.width,
+                target.height,
+            );
+            target.context.restore();
+        }
+    }
+}
+
+export function compositeLayerSurfaces(context, layers, layerSurfaces, width, height) {
+    for (const layer of [...layers].sort((left, right) => left.zIndex - right.zIndex)) {
+        const surface = layerSurfaces.get(layer.id);
+        if (surface) {
+            context.drawImage(surface.canvas, 0, 0, width, height);
+        }
+    }
+}
+
+export function sameKeyframeRef(left, right) {
+    return (
+        left?.layerId === right?.layerId
+        && left?.time === right?.time
+    );
+}
+
+export function selectKeyframeRefs(selected, clicked, orderedRefs, options = {}) {
+    if (!clicked) return { selected: [], anchor: null };
+    const anchor = options.anchor;
+    if (
+        options.range
+        && anchor
+        && anchor.layerId === clicked.layerId
+    ) {
+        const layerRefs = orderedRefs.filter((ref) => ref.layerId === clicked.layerId);
+        const anchorIndex = layerRefs.findIndex((ref) => sameKeyframeRef(ref, anchor));
+        const clickedIndex = layerRefs.findIndex((ref) => sameKeyframeRef(ref, clicked));
+        if (anchorIndex >= 0 && clickedIndex >= 0) {
+            const start = Math.min(anchorIndex, clickedIndex);
+            const end = Math.max(anchorIndex, clickedIndex);
+            return {
+                selected: layerRefs.slice(start, end + 1),
+                anchor,
+            };
+        }
+    }
+    if (options.toggle) {
+        const includesClicked = selected.some((ref) => sameKeyframeRef(ref, clicked));
+        return {
+            selected: includesClicked
+                ? selected.filter((ref) => !sameKeyframeRef(ref, clicked))
+                : [...selected, clicked],
+            anchor: clicked,
+        };
+    }
+    return { selected: [clicked], anchor: clicked };
+}
+
+export function mixedKeyframeFields(keyframes, fields) {
+    return Object.fromEntries(fields.map((field) => {
+        const first = keyframes[0]?.[field];
+        const common = keyframes.every((keyframe) => Object.is(keyframe[field], first));
+        return [field, common ? first : null];
+    }));
+}
+
+export function applyKeyframePatch(layers, selected, patch) {
+    const editableFields = new Set([
+        "time",
+        "assetId",
+        "x",
+        "y",
+        "scale",
+        "rotation",
+        "opacity",
+        "reveal",
+        "easing",
+    ]);
+    const next = structuredClone(layers);
+    const selectedStart = selected.length
+        ? Math.min(...selected.map((ref) => ref.time))
+        : 0;
+    const groupedTimeDelta = (
+        selected.length > 1
+        && patch.time !== null
+        && patch.time !== undefined
+        && patch.time !== ""
+    )
+        ? patch.time - selectedStart
+        : null;
+    for (const layer of next) {
+        for (const keyframe of layer.keyframes) {
+            const ref = { layerId: layer.id, time: keyframe.time };
+            if (!selected.some((item) => sameKeyframeRef(item, ref))) continue;
+            for (const [field, value] of Object.entries(patch)) {
+                if (
+                    editableFields.has(field)
+                    && value !== null
+                    && value !== undefined
+                    && value !== ""
+                ) {
+                    keyframe[field] = field === "time" && groupedTimeDelta !== null
+                        ? keyframe.time + groupedTimeDelta
+                        : value;
+                }
+            }
+        }
+        layer.keyframes.sort((left, right) => left.time - right.time);
+        if (layer.keyframes.some((keyframe, index, keyframes) => (
+            index > 0
+            && Math.abs(keyframe.time - keyframes[index - 1].time) < 0.0001
+        ))) {
+            throw new Error("Grouped timing would overlap another keyframe.");
+        }
+    }
+    return next;
+}
+
+export function deleteKeyframeRefs(layers, selected) {
+    for (const layer of layers) {
+        const selectedCount = layer.keyframes.filter((keyframe) => (
+            selected.some((ref) => sameKeyframeRef(
+                ref,
+                { layerId: layer.id, time: keyframe.time },
+            ))
+        )).length;
+        if (selectedCount > 0 && selectedCount === layer.keyframes.length) {
+            throw new Error("Each Fourier layer must keep at least one keyframe.");
+        }
+    }
+    const next = structuredClone(layers);
+    for (const layer of next) {
+        layer.keyframes = layer.keyframes.filter((keyframe) => (
+            !selected.some((ref) => sameKeyframeRef(
+                ref,
+                { layerId: layer.id, time: keyframe.time },
+            ))
+        ));
+    }
+    return next;
+}
+
 export function renderHtml(nonce) {
     return `<!doctype html>
 <html lang="en">
@@ -270,8 +503,12 @@ export function renderHtml(nonce) {
     .timeline-track.selected .track-name { color: var(--text-color-default, #e6edf3); }
     .track-name {
       overflow: hidden;
+      padding: 0;
+      border: 0;
+      background: transparent;
       color: var(--text-color-muted, #8b949e);
       font-size: 12px;
+      text-align: left;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -294,9 +531,19 @@ export function renderHtml(nonce) {
       top: 50%;
       width: 8px;
       height: 8px;
+      padding: 0;
       border: 1px solid var(--background-color-default, #0d1117);
       background: var(--accent);
       transform: translate(-50%, -50%) rotate(45deg);
+    }
+    .keyframe-dot.selected {
+      border-color: var(--text-color-default, #e6edf3);
+      background: var(--text-color-default, #e6edf3);
+      box-shadow: 0 0 0 3px var(--accent-muted);
+    }
+    .keyframe-dot:focus-visible {
+      outline: 2px solid var(--text-color-default, #e6edf3);
+      outline-offset: 3px;
     }
     .audio-cue-dot {
       position: absolute;
@@ -544,6 +791,8 @@ export function renderHtml(nonce) {
           <label>Speed <input id="asset-speed" type="range" min="0.25" max="3" step="0.25" value="1"></label>
           <label><input id="show-epicycles" type="checkbox"> Epicycles</label>
         </div>
+        <output id="keyframe-selection-status" aria-live="polite">No keyframes selected</output>
+        <p>Click a diamond to select. Ctrl/Cmd-click toggles; Shift-click selects a range within one layer.</p>
         <div class="timeline-ruler"><span>Layers</span><span>0s</span></div>
         <div id="timeline-tracks"></div>
       </section>
@@ -561,7 +810,8 @@ export function renderHtml(nonce) {
             <div class="editor-fields">
               <label>Start <input id="layer-start" type="number" min="0" step="0.01"></label>
               <label>End <input id="layer-end" type="number" min="0" step="0.01"></label>
-              <label>Shape <select id="key-shape" aria-label="Shape at keyframe"></select></label>
+              <label>Time / group start <input id="key-time" type="number" min="0" max="300" step="0.01"></label>
+              <label>Shape <select id="key-shape" aria-label="Shape at keyframe"><option value="">Mixed</option></select></label>
               <label>X <input id="key-x" type="number" min="-2" max="2" step="0.05"></label>
               <label>Y <input id="key-y" type="number" min="-2" max="2" step="0.05"></label>
               <label>Scale <input id="key-scale" type="number" min="0" max="10" step="0.05"></label>
@@ -570,6 +820,7 @@ export function renderHtml(nonce) {
               <label>Reveal <input id="key-reveal" type="number" min="0" max="1" step="0.05"></label>
               <label>Easing
                 <select id="key-easing">
+                  <option value="">Mixed</option>
                   <option value="ease-in-out">Ease in/out</option>
                   <option value="linear">Linear</option>
                   <option value="ease-in">Ease in</option>
@@ -712,7 +963,11 @@ export function renderHtml(nonce) {
       composition: null,
       history: { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 },
       selectedLayerId: null,
+      selectedKeyframes: [],
+      keyframeAnchor: null,
       layerGeometry: new Map(),
+      layerSurfacePool: new Map(),
+      matteSurfacePool: new Map(),
       dragLayer: null,
       strokes: [],
       activeStroke: null,
@@ -788,7 +1043,7 @@ export function renderHtml(nonce) {
       {
         section: "Timing",
         title: "Arrange entrances on the timeline",
-        body: "Each track has a visible start and end. Diamonds mark keyframes and gold dots mark spectral sound cues. Click a track to move the playhead and select its layer.",
+        body: "Each track has a visible start and end. Diamonds mark keyframes and gold dots mark spectral sound cues. Click a diamond to select it, Ctrl/Cmd-click to toggle, or Shift-click for a same-layer range.",
         action: "Click Play once to unlock sound. Each cue uses the selected layer’s strongest stored sine frequencies.",
         mode: "asset",
         target: ".timeline",
@@ -797,7 +1052,7 @@ export function renderHtml(nonce) {
         section: "Keyframes",
         title: "Morph the layer state",
         body: "Click a visible layer to select it, then drag it into place. Choose a different Shape on another keyframe to morph by interpolating the assets’ complex frequency coefficients.",
-        action: "Movement creates position keyframes. Shape changes create spectral morphs. Arrow keys provide precise nudging.",
+        action: "Mixed fields stay blank until edited. Grouped saves and deletes are one undoable history change. Arrow keys provide precise nudging.",
         mode: "asset",
         target: "#layer-editor:not([hidden]), #layer-empty:not([hidden])",
       },
@@ -840,6 +1095,35 @@ export function renderHtml(nonce) {
       }
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       return rect;
+    }
+
+    function acquireDrawingSurface(pool, id, width, height) {
+      let surface = pool.get(id);
+      if (!surface) {
+        const canvas = document.createElement("canvas");
+        surface = { canvas, context: canvas.getContext("2d"), width, height };
+        pool.set(id, surface);
+      }
+      if (
+        surface.canvas.width !== canvases.asset.width
+        || surface.canvas.height !== canvases.asset.height
+      ) {
+        surface.canvas.width = canvases.asset.width;
+        surface.canvas.height = canvases.asset.height;
+      } else {
+        surface.context.setTransform(1, 0, 0, 1, 0, 0);
+        surface.context.clearRect(
+          0,
+          0,
+          surface.canvas.width,
+          surface.canvas.height
+        );
+      }
+      const ratio = window.devicePixelRatio || 1;
+      surface.context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      surface.width = width;
+      surface.height = height;
+      return surface;
     }
 
     function drawGrid(context, width, height) {
@@ -1449,42 +1733,17 @@ export function renderHtml(nonce) {
       if (layer.type === "line") drawSemanticLine(context, layer, layout);
     }
 
-    function evaluateLayer(layer, time) {
-      const defaults = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, reveal: 1 };
-      if (!layer.keyframes.length) return defaults;
-      const resolved = (keyframe) => {
-        const assetId = keyframe.assetId ?? layer.assetId;
-        return {
-          ...defaults,
-          ...keyframe,
-          assetId,
-          morph: { fromAssetId: assetId, toAssetId: assetId, amount: 0 },
-        };
-      };
-      if (time <= layer.keyframes[0].time) return resolved(layer.keyframes[0]);
-      if (time >= layer.keyframes.at(-1).time) return resolved(layer.keyframes.at(-1));
-      const rightIndex = layer.keyframes.findIndex((keyframe) => keyframe.time >= time);
-      const left = resolved(layer.keyframes[rightIndex - 1]);
-      const right = resolved(layer.keyframes[rightIndex]);
-      const span = Math.max(0.0001, right.time - left.time);
-      const amount = easeValue((time - left.time) / span, right.easing);
-      return {
-        time,
-        x: left.x + (right.x - left.x) * amount,
-        y: left.y + (right.y - left.y) * amount,
-        scale: left.scale + (right.scale - left.scale) * amount,
-        rotation: left.rotation + (right.rotation - left.rotation) * amount,
-        opacity: left.opacity + (right.opacity - left.opacity) * amount,
-        reveal: left.reveal + (right.reveal - left.reveal) * amount,
-        assetId: amount < 0.5 ? left.assetId : right.assetId,
-        morph: {
-          fromAssetId: left.assetId,
-          toAssetId: right.assetId,
-          amount,
-        },
-        easing: right.easing,
-      };
-    }
+    ${easeFourierValue.toString()}
+    ${evaluateFourierLayer.toString()}
+    ${resolveOccludedLayerIds.toString()}
+    ${applyOcclusionMattes.toString()}
+    ${compositeLayerSurfaces.toString()}
+    ${sameKeyframeRef.toString()}
+    ${selectKeyframeRefs.toString()}
+    ${mixedKeyframeFields.toString()}
+    ${applyKeyframePatch.toString()}
+    ${deleteKeyframeRefs.toString()}
+    const evaluateLayer = evaluateFourierLayer;
 
     function mapAssetPoint(point, width, height, transform, originX = 0, originY = 0) {
       const angle = transform.rotation * Math.PI / 180;
@@ -1757,9 +2016,25 @@ export function renderHtml(nonce) {
         4096,
         Math.floor(500000 / Math.max(1, layers.length))
       );
+      const layerSurfaces = new Map();
+      const matteSurfaces = new Map();
+      const activeLayerIds = new Set(layers.map((layer) => layer.id));
+      for (const id of state.layerSurfacePool.keys()) {
+        if (!activeLayerIds.has(id)) state.layerSurfacePool.delete(id);
+      }
+      for (const id of state.matteSurfacePool.keys()) {
+        if (!activeLayerIds.has(id)) state.matteSurfacePool.delete(id);
+      }
       layers.forEach((layer, layerIndex) => {
+        const surface = acquireDrawingSurface(
+          state.layerSurfacePool,
+          layer.id,
+          width,
+          height
+        );
+        layerSurfaces.set(layer.id, surface);
         if (layer.type !== "fourier") {
-          if (layout) drawSemanticLayer(contexts.asset, layer, layout);
+          if (layout) drawSemanticLayer(surface.context, layer, layout);
           return;
         }
         const transform = evaluateLayer(layer, state.compositionTime);
@@ -1779,12 +2054,12 @@ export function renderHtml(nonce) {
         if (transform.opacity <= 0 || transform.scale <= 0 || transform.reveal <= 0) return;
 
         const hue = (210 + layerIndex * 47) % 360;
-        contexts.asset.save();
-        contexts.asset.globalAlpha = transform.opacity;
-        contexts.asset.strokeStyle = "hsl(" + hue + " 80% 65%)";
-        contexts.asset.lineWidth = 2.2;
-        contexts.asset.lineCap = "round";
-        contexts.asset.lineJoin = "round";
+        surface.context.save();
+        surface.context.globalAlpha = transform.opacity;
+        surface.context.strokeStyle = "hsl(" + hue + " 80% 65%)";
+        surface.context.lineWidth = 2.2;
+        surface.context.lineCap = "round";
+        surface.context.lineJoin = "round";
         const geometry = buildLayerGeometry(
           layer,
           sourceAsset,
@@ -1799,12 +2074,12 @@ export function renderHtml(nonce) {
         );
         state.layerGeometry.set(layer.id, geometry);
         for (const polyline of geometry.polylines) {
-          contexts.asset.beginPath();
+          surface.context.beginPath();
           polyline.forEach((point, index) => {
-            if (index === 0) contexts.asset.moveTo(point.x, point.y);
-            else contexts.asset.lineTo(point.x, point.y);
+            if (index === 0) surface.context.moveTo(point.x, point.y);
+            else surface.context.lineTo(point.x, point.y);
           });
-          contexts.asset.stroke();
+          surface.context.stroke();
         }
         const epicycleAsset = (transform.morph?.amount ?? 0) < 0.5
           ? sourceAsset
@@ -1812,7 +2087,7 @@ export function renderHtml(nonce) {
         if (layer.id === state.selectedLayerId && epicycleAsset.strokes[0]) {
           const stroke = epicycleAsset.strokes[0];
           drawEpicycles(
-            contexts.asset,
+            surface.context,
             stroke,
             (stroke.closed ? 1 : 0.5) * transform.reveal,
             fourierFrame.width,
@@ -1822,8 +2097,63 @@ export function renderHtml(nonce) {
             fourierFrame.top
           );
         }
-        contexts.asset.restore();
+        surface.context.restore();
+
+        if (layer.occludes) {
+          const matteSourceAsset = state.assets.get(
+            transform.matteMorph?.fromAssetId ?? transform.matteAssetId
+          );
+          const matteTargetAsset = state.assets.get(
+            transform.matteMorph?.toAssetId ?? transform.matteAssetId
+          );
+          if (matteSourceAsset && matteTargetAsset) {
+            const matteSurface = acquireDrawingSurface(
+              state.matteSurfacePool,
+              layer.id,
+              width,
+              height
+            );
+            const matteTransform = {
+              ...transform,
+              morph: transform.matteMorph,
+            };
+            const matteGeometry = buildLayerGeometry(
+              layer,
+              matteSourceAsset,
+              matteTargetAsset,
+              fourierFrame.width,
+              fourierFrame.height,
+              matteTransform,
+              perLayerSampleBudget,
+              perLayerOperationBudget,
+              fourierFrame.left,
+              fourierFrame.top
+            );
+            matteSurface.context.save();
+            matteSurface.context.globalAlpha = transform.opacity;
+            matteSurface.context.fillStyle = "#000";
+            matteSurface.context.strokeStyle = "#000";
+            matteSurface.context.lineWidth = Math.max(0, layer.mattePadding * 2);
+            matteSurface.context.lineCap = "round";
+            matteSurface.context.lineJoin = "round";
+            for (const polyline of matteGeometry.polylines) {
+              if (polyline.length < 2) continue;
+              matteSurface.context.beginPath();
+              polyline.forEach((point, index) => {
+                if (index === 0) matteSurface.context.moveTo(point.x, point.y);
+                else matteSurface.context.lineTo(point.x, point.y);
+              });
+              matteSurface.context.closePath();
+              matteSurface.context.fill();
+              if (layer.mattePadding > 0) matteSurface.context.stroke();
+            }
+            matteSurface.context.restore();
+            matteSurfaces.set(layer.id, matteSurface);
+          }
+        }
       });
+      applyOcclusionMattes(layers, layerSurfaces, matteSurfaces);
+      compositeLayerSurfaces(contexts.asset, layers, layerSurfaces, width, height);
       drawLayerSelection(contexts.asset);
     }
 
@@ -2086,6 +2416,12 @@ export function renderHtml(nonce) {
         const select = document.querySelector("#" + id);
         const selected = select.value;
         select.replaceChildren();
+        if (id === "key-shape") {
+          const mixed = document.createElement("option");
+          mixed.value = "";
+          mixed.textContent = "Mixed";
+          select.append(mixed);
+        }
         for (const summary of summaries) {
           const option = document.createElement("option");
           option.value = summary.id;
@@ -2109,7 +2445,11 @@ export function renderHtml(nonce) {
           layer.type === "fourier"
             ? [
                 layer.assetId,
-                ...layer.keyframes.map((keyframe) => keyframe.assetId ?? layer.assetId),
+                layer.matteAssetId,
+                ...layer.keyframes.flatMap((keyframe) => [
+                  keyframe.assetId ?? layer.assetId,
+                  keyframe.matteAssetId,
+                ]),
               ]
             : []
         )).filter(Boolean)
@@ -2120,6 +2460,19 @@ export function renderHtml(nonce) {
         || !composition.layers.some((layer) => layer.id === state.selectedLayerId)
       ) {
         state.selectedLayerId = composition.layers[0]?.id ?? null;
+      }
+      const availableRefs = allKeyframeRefs();
+      state.selectedKeyframes = state.selectedKeyframes.filter((selected) => (
+        availableRefs.some((available) => sameKeyframeRef(selected, available))
+      ));
+      if (
+        state.keyframeAnchor
+        && !availableRefs.some((available) => sameKeyframeRef(
+          state.keyframeAnchor,
+          available
+        ))
+      ) {
+        state.keyframeAnchor = null;
       }
       document.querySelector("#asset-title").textContent = composition.name;
       const semanticSummary = composition.presentation?.accessibleSummary;
@@ -2237,6 +2590,42 @@ export function renderHtml(nonce) {
       ) ?? null;
     }
 
+    function allKeyframeRefs() {
+      return state.composition?.layers.flatMap((layer) => (
+        layer.keyframes.map((keyframe) => ({
+          layerId: layer.id,
+          time: keyframe.time,
+        }))
+      )) ?? [];
+    }
+
+    function selectedKeyframeValues() {
+      if (!state.composition) return [];
+      return state.selectedKeyframes.flatMap((selected) => {
+        const layer = state.composition.layers.find(
+          (candidate) => candidate.id === selected.layerId
+        );
+        const keyframe = layer?.keyframes.find(
+          (candidate) => candidate.time === selected.time
+        );
+        return keyframe ? [keyframe] : [];
+      });
+    }
+
+    function clearKeyframeSelection(render = true) {
+      const cleared = selectKeyframeRefs(
+        state.selectedKeyframes,
+        null,
+        allKeyframeRefs()
+      );
+      state.selectedKeyframes = cleared.selected;
+      state.keyframeAnchor = cleared.anchor;
+      if (render) {
+        renderTimeline();
+        syncLayerEditor();
+      }
+    }
+
     function setCompositionTime(time, syncEditor = true) {
       if (!state.composition) return;
       state.compositionTime = Math.max(0, Math.min(state.composition.duration, time));
@@ -2258,6 +2647,12 @@ export function renderHtml(nonce) {
 
     function renderTimeline() {
       const container = document.querySelector("#timeline-tracks");
+      const focusedKeyframe = document.activeElement?.classList.contains("keyframe-dot")
+        ? {
+            layerId: document.activeElement.dataset.layerId,
+            time: document.activeElement.dataset.keyframeTime,
+          }
+        : null;
       container.replaceChildren();
       if (!state.composition) return;
       for (const layer of [...state.composition.layers].sort(
@@ -2266,14 +2661,14 @@ export function renderHtml(nonce) {
         const track = document.createElement("div");
         track.className = "timeline-track" +
           (layer.id === state.selectedLayerId ? " selected" : "");
-        track.tabIndex = 0;
-        track.setAttribute("role", "button");
+        track.setAttribute("role", "group");
         track.setAttribute(
           "aria-label",
           layer.name + ", visible from " + layer.start.toFixed(2) +
             " to " + layer.end.toFixed(2) + " seconds"
         );
-        const name = document.createElement("span");
+        const name = document.createElement("button");
+        name.type = "button";
         name.className = "track-name";
         name.textContent = layer.name;
         const lane = document.createElement("div");
@@ -2285,10 +2680,40 @@ export function renderHtml(nonce) {
           ((layer.end - layer.start) / state.composition.duration * 100) + "%";
         lane.append(block);
         for (const keyframe of layer.keyframes) {
-          const dot = document.createElement("span");
-          dot.className = "keyframe-dot";
+          const ref = { layerId: layer.id, time: keyframe.time };
+          const selected = state.selectedKeyframes.some(
+            (candidate) => sameKeyframeRef(candidate, ref)
+          );
+          const dot = document.createElement("button");
+          dot.type = "button";
+          dot.className = "keyframe-dot" + (selected ? " selected" : "");
+          dot.dataset.layerId = layer.id;
+          dot.dataset.keyframeTime = String(keyframe.time);
           dot.style.left = (keyframe.time / state.composition.duration * 100) + "%";
           dot.title = keyframe.time.toFixed(2) + "s";
+          dot.setAttribute(
+            "aria-label",
+            layer.name + " keyframe at " + keyframe.time.toFixed(2) + " seconds"
+          );
+          dot.setAttribute("aria-pressed", String(selected));
+          dot.addEventListener("click", (event) => {
+            event.stopPropagation();
+            state.selectedLayerId = layer.id;
+            const result = selectKeyframeRefs(
+              state.selectedKeyframes,
+              ref,
+              allKeyframeRefs(),
+              {
+                toggle: event.ctrlKey || event.metaKey,
+                range: event.shiftKey,
+                anchor: state.keyframeAnchor,
+              }
+            );
+            state.selectedKeyframes = result.selected;
+            state.keyframeAnchor = result.anchor;
+            setCompositionTime(keyframe.time);
+            renderTimeline();
+          });
           lane.append(dot);
         }
         if (layer.audio?.enabled) {
@@ -2303,24 +2728,37 @@ export function renderHtml(nonce) {
         playhead.className = "playhead";
         lane.append(playhead);
         track.append(name, lane);
-        track.addEventListener("click", (event) => {
+        name.addEventListener("click", () => {
           state.selectedLayerId = layer.id;
+          clearKeyframeSelection(false);
+          if (state.compositionTime < layer.start || state.compositionTime > layer.end) {
+            setCompositionTime(layer.start);
+          } else {
+            syncLayerEditor();
+          }
+          renderTimeline();
+        });
+        lane.addEventListener("click", (event) => {
+          state.selectedLayerId = layer.id;
+          clearKeyframeSelection(false);
           const rect = lane.getBoundingClientRect();
           setCompositionTime(
             ((event.clientX - rect.left) / rect.width) * state.composition.duration
           );
           renderTimeline();
         });
-        track.addEventListener("keydown", (event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          state.selectedLayerId = layer.id;
-          if (state.compositionTime < layer.start || state.compositionTime > layer.end) {
-            setCompositionTime(layer.start);
-          }
-          renderTimeline();
-        });
         container.append(track);
+      }
+      const selectionCount = state.selectedKeyframes.length;
+      document.querySelector("#keyframe-selection-status").textContent =
+        selectionCount === 0
+          ? "No keyframes selected"
+          : selectionCount + " keyframe" + (selectionCount === 1 ? "" : "s") + " selected";
+      if (focusedKeyframe) {
+        [...container.querySelectorAll(".keyframe-dot")].find((dot) => (
+          dot.dataset.layerId === focusedKeyframe.layerId
+          && dot.dataset.keyframeTime === focusedKeyframe.time
+        ))?.focus();
       }
       updateTimelinePlayhead();
     }
@@ -2332,6 +2770,7 @@ export function renderHtml(nonce) {
       if (!layer) return;
       const isFourierLayer = layer.type === "fourier";
       for (const id of [
+        "key-time",
         "key-shape",
         "key-x",
         "key-y",
@@ -2351,6 +2790,39 @@ export function renderHtml(nonce) {
         document.querySelector("#" + id).disabled = !isFourierLayer;
       }
       const value = evaluateLayer(layer, state.compositionTime);
+      const selectedValues = selectedKeyframeValues();
+      const keyframeState = selectedValues.length
+        ? mixedKeyframeFields(selectedValues, [
+            "time",
+            "assetId",
+            "x",
+            "y",
+            "scale",
+            "rotation",
+            "opacity",
+            "reveal",
+            "easing",
+          ])
+        : {
+            time: state.compositionTime,
+            assetId: value.assetId ?? layer.assetId,
+            x: value.x,
+            y: value.y,
+            scale: value.scale,
+            rotation: value.rotation,
+            opacity: value.opacity,
+            reveal: value.reveal,
+            easing: value.easing ?? "ease-in-out",
+          };
+      const setEditorValue = (id, editorValue, digits = null) => {
+        const input = document.querySelector("#" + id);
+        input.value = editorValue === null
+          ? ""
+          : digits === null ? editorValue : Number(editorValue).toFixed(digits);
+        if ("placeholder" in input) {
+          input.placeholder = editorValue === null ? "Mixed" : "";
+        }
+      };
       const sourceName = state.assetSummaries.find(
         (summary) => summary.id === value.morph?.fromAssetId
       )?.name;
@@ -2363,17 +2835,21 @@ export function renderHtml(nonce) {
         : "";
       document.querySelector("#selected-layer-status").textContent =
         "Editing " + layer.name + " · visible " +
-        layer.start.toFixed(2) + "–" + layer.end.toFixed(2) + "s" + morphLabel;
+        layer.start.toFixed(2) + "–" + layer.end.toFixed(2) + "s" + morphLabel +
+        (selectedValues.length
+          ? " · " + selectedValues.length + " selected"
+          : "");
       document.querySelector("#layer-start").value = layer.start;
       document.querySelector("#layer-end").value = layer.end;
-      document.querySelector("#key-x").value = value.x.toFixed(3);
-      document.querySelector("#key-y").value = value.y.toFixed(3);
-      document.querySelector("#key-scale").value = value.scale.toFixed(3);
-      document.querySelector("#key-rotation").value = value.rotation.toFixed(2);
-      document.querySelector("#key-opacity").value = value.opacity.toFixed(3);
-      document.querySelector("#key-reveal").value = value.reveal.toFixed(3);
-      document.querySelector("#key-easing").value = value.easing ?? "ease-in-out";
-      document.querySelector("#key-shape").value = value.assetId ?? layer.assetId ?? "";
+      setEditorValue("key-time", keyframeState.time, 2);
+      setEditorValue("key-x", keyframeState.x, 3);
+      setEditorValue("key-y", keyframeState.y, 3);
+      setEditorValue("key-scale", keyframeState.scale, 3);
+      setEditorValue("key-rotation", keyframeState.rotation, 2);
+      setEditorValue("key-opacity", keyframeState.opacity, 3);
+      setEditorValue("key-reveal", keyframeState.reveal, 3);
+      document.querySelector("#key-easing").value = keyframeState.easing ?? "";
+      document.querySelector("#key-shape").value = keyframeState.assetId ?? "";
       const motion = state.motionPreviews.get(layer.id) ?? layer.motion;
       const audio = state.audioPreviews.get(layer.id) ?? layer.audio;
       document.querySelector("#motion-enabled").checked = motion?.enabled === true;
@@ -2398,8 +2874,28 @@ export function renderHtml(nonce) {
         (keyframe) => Math.abs(keyframe.time - state.compositionTime) < 0.005
       );
       document.querySelector("#save-keyframe").textContent =
-        hasKeyframe ? "Update keyframe" : "Set keyframe";
-      document.querySelector("#remove-keyframe").disabled = !hasKeyframe;
+        selectedValues.length
+          ? "Update " + selectedValues.length + " keyframe" +
+            (selectedValues.length === 1 ? "" : "s")
+          : hasKeyframe ? "Update keyframe" : "Set keyframe";
+      document.querySelector("#remove-keyframe").textContent =
+        selectedValues.length
+          ? "Delete " + selectedValues.length + " keyframe" +
+            (selectedValues.length === 1 ? "" : "s")
+          : "Remove keyframe";
+      const deletionWouldEmptyLayer = selectedValues.length
+        ? state.composition.layers.some((candidate) => {
+            const selectedCount = candidate.keyframes.filter((keyframe) => (
+              state.selectedKeyframes.some((ref) => sameKeyframeRef(
+                ref,
+                { layerId: candidate.id, time: keyframe.time }
+              ))
+            )).length;
+            return selectedCount > 0 && selectedCount === candidate.keyframes.length;
+          })
+        : hasKeyframe && layer.keyframes.length === 1;
+      document.querySelector("#remove-keyframe").disabled =
+        deletionWouldEmptyLayer || (!selectedValues.length && !hasKeyframe);
     }
 
     async function addLayer(assetId, requestedStart = state.compositionTime) {
@@ -2456,7 +2952,7 @@ export function renderHtml(nonce) {
 
     function editorKeyframe() {
       return {
-        time: state.compositionTime,
+        time: Number(document.querySelector("#key-time").value),
         assetId: document.querySelector("#key-shape").value,
         x: Number(document.querySelector("#key-x").value),
         y: Number(document.querySelector("#key-y").value),
@@ -2466,6 +2962,31 @@ export function renderHtml(nonce) {
         reveal: Number(document.querySelector("#key-reveal").value),
         easing: document.querySelector("#key-easing").value,
       };
+    }
+
+    function editorKeyframePatch() {
+      const patch = {};
+      const numberFields = {
+        time: "key-time",
+        x: "key-x",
+        y: "key-y",
+        scale: "key-scale",
+        rotation: "key-rotation",
+        opacity: "key-opacity",
+        reveal: "key-reveal",
+      };
+      for (const [field, id] of Object.entries(numberFields)) {
+        const input = document.querySelector("#" + id);
+        if (input.value !== "") patch[field] = Number(input.value);
+      }
+      for (const [field, id] of [
+        ["assetId", "key-shape"],
+        ["easing", "key-easing"],
+      ]) {
+        const value = document.querySelector("#" + id).value;
+        if (value !== "") patch[field] = value;
+      }
+      return patch;
     }
 
     function positionKeyframeAtPlayhead(layer) {
@@ -2729,6 +3250,19 @@ export function renderHtml(nonce) {
       if (!document.querySelector("#tour-overlay").hidden) return;
       if (state.mode !== "asset") return;
       if (["INPUT", "SELECT", "BUTTON", "TEXTAREA"].includes(event.target.tagName)) return;
+      if (event.key === "Escape" && state.selectedKeyframes.length) {
+        event.preventDefault();
+        clearKeyframeSelection();
+        return;
+      }
+      if (
+        (event.key === "Delete" || event.key === "Backspace")
+        && state.selectedKeyframes.length
+      ) {
+        event.preventDefault();
+        document.querySelector("#remove-keyframe").click();
+        return;
+      }
       const commandKey = event.ctrlKey || event.metaKey;
       if (
         commandKey
@@ -2960,19 +3494,79 @@ export function renderHtml(nonce) {
         document.querySelector("#composition-error").textContent = error.message;
       }
     });
+    document.querySelector("#timeline-tracks").addEventListener("click", (event) => {
+      if (event.target === event.currentTarget) clearKeyframeSelection();
+    });
     document.querySelector("#save-keyframe").addEventListener("click", async () => {
       const layer = selectedLayer();
       if (!layer) return;
+      if (state.selectedKeyframes.length) {
+        try {
+          const patch = editorKeyframePatch();
+          const selectedStart = Math.min(
+            ...state.selectedKeyframes.map((ref) => ref.time)
+          );
+          const timeDelta = patch.time === undefined
+            ? null
+            : state.selectedKeyframes.length > 1
+              ? patch.time - selectedStart
+              : patch.time - state.selectedKeyframes[0].time;
+          state.composition.layers = applyKeyframePatch(
+            state.composition.layers,
+            state.selectedKeyframes,
+            patch
+          );
+          state.selectedKeyframes = state.selectedKeyframes.map((ref) => ({
+            ...ref,
+            ...(timeDelta === null ? {} : { time: ref.time + timeDelta }),
+          })).filter((ref, index, values) => (
+            values.findIndex((candidate) => sameKeyframeRef(candidate, ref)) === index
+          ));
+          state.keyframeAnchor = state.selectedKeyframes.at(-1) ?? null;
+          await saveComposition();
+        } catch (error) {
+          document.querySelector("#composition-error").textContent = error.message;
+          syncLayerEditor();
+        }
+        return;
+      }
+      const editedKeyframe = editorKeyframe();
+      if (layer.keyframes.some((keyframe) => (
+        Math.abs(keyframe.time - state.compositionTime) >= 0.005
+        && Math.abs(keyframe.time - editedKeyframe.time) < 0.0001
+      ))) {
+        document.querySelector("#composition-error").textContent =
+          "A keyframe already exists at that time.";
+        return;
+      }
       layer.keyframes = layer.keyframes.filter(
         (keyframe) => Math.abs(keyframe.time - state.compositionTime) >= 0.005
       );
-      layer.keyframes.push(editorKeyframe());
+      layer.keyframes.push(editedKeyframe);
       layer.keyframes.sort((left, right) => left.time - right.time);
       await saveComposition();
     });
     document.querySelector("#remove-keyframe").addEventListener("click", async () => {
       const layer = selectedLayer();
       if (!layer) return;
+      if (state.selectedKeyframes.length) {
+        try {
+          state.composition.layers = deleteKeyframeRefs(
+            state.composition.layers,
+            state.selectedKeyframes
+          );
+          clearKeyframeSelection(false);
+          await saveComposition();
+        } catch (error) {
+          document.querySelector("#composition-error").textContent = error.message;
+        }
+        return;
+      }
+      if (layer.keyframes.length === 1) {
+        document.querySelector("#composition-error").textContent =
+          "Each Fourier layer must keep at least one keyframe.";
+        return;
+      }
       layer.keyframes = layer.keyframes.filter(
         (keyframe) => Math.abs(keyframe.time - state.compositionTime) >= 0.005
       );

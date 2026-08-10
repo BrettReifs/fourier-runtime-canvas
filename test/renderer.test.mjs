@@ -105,6 +105,26 @@ test("hybrid renderer avoids semantic asset loads and exposes accessible playbac
     assert.match(html, /aria-describedby="scene-summary"/);
 });
 
+test("renderer wires offscreen matte compositing and accessible grouped keyframe selection", () => {
+    const html = renderHtml("matte-editor-nonce");
+    const script = html.match(
+        /<script nonce="matte-editor-nonce">([\s\S]*?)<\/script>/,
+    )?.[1];
+
+    assert.match(script, /function acquireDrawingSurface\(pool, id, width, height\)/);
+    assert.match(script, /layerSurfacePool: new Map\(\)/);
+    assert.match(script, /globalCompositeOperation = "destination-out"/);
+    assert.match(script, /transform\.matteMorph/);
+    assert.match(script, /layer\.mattePadding \* 2/);
+    assert.match(script, /selectKeyframeRefs\(/);
+    assert.match(script, /event\.ctrlKey \|\| event\.metaKey/);
+    assert.match(script, /range: event\.shiftKey/);
+    assert.match(script, /mixedKeyframeFields\(/);
+    assert.match(script, /focusedKeyframe[\s\S]*keyframeTime[\s\S]*\.focus\(\)/);
+    assert.match(html, /id="keyframe-selection-status" aria-live="polite"/);
+    assert.match(html, /id="key-time"/);
+});
+
 test("semantic initial state and create events select the visible composition view", () => {
     const semantic = {
         revision: 3,

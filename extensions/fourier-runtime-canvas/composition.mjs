@@ -10,6 +10,7 @@ const MAX_SCENE_COEFFICIENTS = 8192;
 const MAX_SCENE_STROKES = 256;
 const MAX_SEMANTIC_VALUES = 32;
 const MAX_SEMANTIC_TEXT_CHARACTERS = 2048;
+const MAX_MATTE_PADDING = 16;
 const SEMANTIC_LAYER_TYPES = new Set(["text", "bar-chart", "line"]);
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 const PROPERTY_DEFAULTS = Object.freeze({
@@ -80,6 +81,7 @@ function normalizeKeyframe(
         new Set([
             "time",
             "assetId",
+            "matteAssetId",
             "x",
             "y",
             "scale",
@@ -103,9 +105,20 @@ function normalizeKeyframe(
     if (!requiresAsset && input.assetId !== undefined) {
         throw new Error(`${label} cannot reference a Fourier asset on a semantic layer.`);
     }
+    if (
+        requiresAsset
+        && input.matteAssetId !== undefined
+        && (!validId(input.matteAssetId) || !assetIds.has(input.matteAssetId))
+    ) {
+        throw new Error(`${label} references an unavailable matte asset.`);
+    }
+    if (!requiresAsset && input.matteAssetId !== undefined) {
+        throw new Error(`${label} cannot reference a matte asset on a semantic layer.`);
+    }
     return {
         time: bounded(input.time, 0, 0, duration, `${label} time`),
         ...(requiresAsset ? { assetId } : {}),
+        ...(input.matteAssetId !== undefined ? { matteAssetId: input.matteAssetId } : {}),
         x: bounded(input.x, PROPERTY_DEFAULTS.x, -2, 2, `${label} x`),
         y: bounded(input.y, PROPERTY_DEFAULTS.y, -2, 2, `${label} y`),
         scale: bounded(input.scale, PROPERTY_DEFAULTS.scale, 0, 10, `${label} scale`),
@@ -121,6 +134,38 @@ function normalizeKeyframe(
         easing: ["linear", "ease-in", "ease-out", "ease-in-out"].includes(input.easing)
             ? input.easing
             : "ease-in-out",
+    };
+}
+
+function normalizeOccludes(input, index) {
+    if (!plainObject(input)) {
+        throw new Error(`Layer ${index + 1} occludes must be an object.`);
+    }
+    assertAllowedKeys(
+        input,
+        new Set(["layerIds", "zIndices"]),
+        `Layer ${index + 1} occludes`,
+    );
+    const layerIds = input.layerIds ?? [];
+    const zIndices = input.zIndices ?? [];
+    if (!Array.isArray(layerIds) || !Array.isArray(zIndices)) {
+        throw new Error(`Layer ${index + 1} occlusion selectors must be arrays.`);
+    }
+    if (!layerIds.length && !zIndices.length) {
+        throw new Error(`Layer ${index + 1} occludes must select at least one lower layer.`);
+    }
+    if (layerIds.some((id) => !validId(id))) {
+        throw new Error(`Layer ${index + 1} occludes contains an invalid layer ID.`);
+    }
+    if (zIndices.some((zIndex) => (
+        !Number.isSafeInteger(zIndex)
+        || Math.abs(zIndex) > MAX_Z_INDEX_MAGNITUDE
+    ))) {
+        throw new Error(`Layer ${index + 1} occludes contains an invalid z-index.`);
+    }
+    return {
+        layerIds: [...new Set(layerIds)],
+        zIndices: [...new Set(zIndices)],
     };
 }
 
@@ -452,6 +497,9 @@ function normalizeLayer(input, duration, index, assetIds) {
             "name",
             "type",
             "assetId",
+            "matteAssetId",
+            "mattePadding",
+            "occludes",
             "start",
             "end",
             "zIndex",
@@ -478,6 +526,23 @@ function normalizeLayer(input, duration, index, assetIds) {
     }
     if (type !== "fourier" && input.assetId !== undefined) {
         throw new Error(`Layer ${index + 1} semantic layers cannot reference Fourier assets.`);
+    }
+    if (
+        type === "fourier"
+        && input.matteAssetId !== undefined
+        && (!validId(input.matteAssetId) || !assetIds.has(input.matteAssetId))
+    ) {
+        throw new Error(`Layer ${index + 1} references an unavailable matte asset.`);
+    }
+    if (
+        type !== "fourier"
+        && (
+            input.matteAssetId !== undefined
+            || input.mattePadding !== undefined
+            || input.occludes !== undefined
+        )
+    ) {
+        throw new Error(`Layer ${index + 1} semantic layers cannot define occlusion mattes.`);
     }
     if (type !== "fourier" && !plainObject(input.semantic)) {
         throw new Error(`Layer ${index + 1} semantic content must be an object.`);
@@ -514,6 +579,9 @@ function normalizeLayer(input, duration, index, assetIds) {
         ));
     const motionInput = input.motion ?? {};
     const audioInput = input.audio ?? {};
+    const occludes = input.occludes === undefined
+        ? null
+        : normalizeOccludes(input.occludes, index);
     if (!plainObject(motionInput) || !plainObject(audioInput)) {
         throw new Error(`Layer ${index + 1} motion and audio settings must be objects.`);
     }
@@ -554,6 +622,19 @@ function normalizeLayer(input, duration, index, assetIds) {
             : `Layer ${index + 1}`,
         type,
         ...(type === "fourier" ? { assetId: input.assetId } : {}),
+        ...(type === "fourier" && input.matteAssetId !== undefined
+            ? { matteAssetId: input.matteAssetId }
+            : {}),
+        ...(occludes ? {
+            mattePadding: bounded(
+                input.mattePadding,
+                3,
+                0,
+                MAX_MATTE_PADDING,
+                `Layer ${index + 1} matte padding`,
+            ),
+            occludes,
+        } : {}),
         start,
         end,
         zIndex: boundedInteger(
@@ -719,6 +800,28 @@ export function normalizeComposition(input, assetIds) {
         layerIds.add(layer.id);
         totalKeyframes += layer.keyframes.length;
     }
+    const layersById = new Map(layers.map((layer) => [layer.id, layer]));
+    for (const layer of layers) {
+        for (const occludedLayerId of layer.occludes?.layerIds ?? []) {
+            if (!layerIds.has(occludedLayerId)) {
+                throw new Error(
+                    `Layer ${layer.id} occludes references unavailable layer ${occludedLayerId}.`,
+                );
+            }
+            if (layersById.get(occludedLayerId).zIndex >= layer.zIndex) {
+                throw new Error(
+                    `Layer ${layer.id} occludes must target a lower-depth layer.`,
+                );
+            }
+        }
+        if (
+            layer.occludes?.zIndices.some((zIndex) => zIndex >= layer.zIndex)
+        ) {
+            throw new Error(
+                `Layer ${layer.id} occludes must target lower-depth z-indices.`,
+            );
+        }
+    }
     if (totalKeyframes > MAX_TOTAL_KEYFRAMES) {
         throw new Error(
             `A composition may contain at most ${MAX_TOTAL_KEYFRAMES} keyframes in total.`,
@@ -780,6 +883,7 @@ export const COMPOSITION_LIMITS = Object.freeze({
     maxSceneStrokes: MAX_SCENE_STROKES,
     maxSemanticValues: MAX_SEMANTIC_VALUES,
     maxSemanticTextCharacters: MAX_SEMANTIC_TEXT_CHARACTERS,
+    maxMattePadding: MAX_MATTE_PADDING,
 });
 
 function assetPairComplexity(sourceAsset, targetAsset) {
@@ -799,6 +903,20 @@ function assetPairComplexity(sourceAsset, targetAsset) {
     return { coefficientCount, strokeCount };
 }
 
+function assetSequenceComplexity(assetSequence, assets) {
+    let coefficientCount = 0;
+    let strokeCount = 0;
+    for (let index = 1; index < assetSequence.length; index += 1) {
+        const complexity = assetPairComplexity(
+            assets.get(assetSequence[index - 1]),
+            assets.get(assetSequence[index]),
+        );
+        coefficientCount = Math.max(coefficientCount, complexity.coefficientCount);
+        strokeCount = Math.max(strokeCount, complexity.strokeCount);
+    }
+    return { coefficientCount, strokeCount };
+}
+
 export function validateCompositionComplexity(composition, assets) {
     let coefficientCount = 0;
     let strokeCount = 0;
@@ -809,18 +927,22 @@ export function validateCompositionComplexity(composition, assets) {
         const assetSequence = layer.keyframes.length > 1
             ? layer.keyframes.map((keyframe) => keyframe.assetId)
             : [layer.assetId, layer.keyframes[0]?.assetId ?? layer.assetId];
-        let layerCoefficients = 0;
-        let layerStrokes = 0;
-        for (let index = 1; index < assetSequence.length; index += 1) {
-            const complexity = assetPairComplexity(
-                assets.get(assetSequence[index - 1]),
-                assets.get(assetSequence[index]),
-            );
-            layerCoefficients = Math.max(layerCoefficients, complexity.coefficientCount);
-            layerStrokes = Math.max(layerStrokes, complexity.strokeCount);
+        const layerComplexity = assetSequenceComplexity(assetSequence, assets);
+        coefficientCount += layerComplexity.coefficientCount;
+        strokeCount += layerComplexity.strokeCount;
+        if (layer.occludes) {
+            const matteSequence = layer.keyframes.length > 1
+                ? layer.keyframes.map((keyframe) => (
+                    keyframe.matteAssetId
+                    ?? layer.matteAssetId
+                    ?? keyframe.assetId
+                    ?? layer.assetId
+                ))
+                : [layer.matteAssetId ?? layer.assetId, layer.matteAssetId ?? layer.assetId];
+            const matteComplexity = assetSequenceComplexity(matteSequence, assets);
+            coefficientCount += matteComplexity.coefficientCount;
+            strokeCount += matteComplexity.strokeCount;
         }
-        coefficientCount += layerCoefficients;
-        strokeCount += layerStrokes;
     }
     if (coefficientCount > MAX_SCENE_COEFFICIENTS) {
         throw new Error(

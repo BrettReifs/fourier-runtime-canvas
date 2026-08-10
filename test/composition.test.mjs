@@ -51,6 +51,7 @@ test("composition normalization preserves morph targets, motion, and audio setti
         detail: 6,
         seed: 42,
     });
+
     assert.deepEqual(layer.audio, {
         enabled: true,
         triggerTime: 2,
@@ -59,6 +60,51 @@ test("composition normalization preserves morph targets, motion, and audio setti
         duration: 0.4,
         partialCount: 6,
     });
+});
+
+test("composition normalization preserves animated matte references and occlusion selectors", () => {
+    const composition = normalizeComposition({
+        format: "fourier-composition/v1",
+        duration: 8,
+        layers: [
+            {
+                id: "background",
+                assetId: "asset-a",
+                zIndex: 0,
+            },
+            {
+                id: "character",
+                assetId: "asset-b",
+                matteAssetId: "matte-a",
+                mattePadding: 4,
+                occludes: {
+                    layerIds: ["background"],
+                    zIndices: [-1],
+                },
+                zIndex: 2,
+                keyframes: [
+                    { time: 0, assetId: "asset-b", matteAssetId: "matte-a" },
+                    { time: 8, assetId: "asset-c", matteAssetId: "matte-b" },
+                ],
+            },
+        ],
+    }, new Set(["asset-a", "asset-b", "asset-c", "matte-a", "matte-b"]));
+
+    const character = composition.layers[1];
+    assert.equal(character.matteAssetId, "matte-a");
+    assert.equal(character.mattePadding, 4);
+    assert.deepEqual(character.occludes, {
+        layerIds: ["background"],
+        zIndices: [-1],
+    });
+    assert.deepEqual(
+        character.keyframes.map(({ matteAssetId }) => matteAssetId),
+        ["matte-a", "matte-b"],
+    );
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(character.occludes)),
+        character.occludes,
+    );
 });
 
 test("composition normalization rejects unavailable morph assets", () => {
@@ -70,6 +116,26 @@ test("composition normalization rejects unavailable morph assets", () => {
             keyframes: [{ time: 4, assetId: "missing" }],
         }],
     }, new Set(["asset-a"])), /unavailable Fourier asset/);
+});
+
+test("composition normalization rejects occlusion selectors that are not lower-depth", () => {
+    assert.throws(() => normalizeComposition({
+        format: "fourier-composition/v1",
+        duration: 8,
+        layers: [
+            {
+                id: "foreground",
+                assetId: "asset-a",
+                zIndex: 2,
+                occludes: { layerIds: ["overlay"] },
+            },
+            {
+                id: "overlay",
+                assetId: "asset-a",
+                zIndex: 3,
+            },
+        ],
+    }, new Set(["asset-a"])), /must target a lower-depth layer/);
 });
 
 test("composition normalization bounds numeric fields and rejects duplicate layer IDs", () => {
@@ -168,6 +234,45 @@ test("scene complexity counts the union of frequencies used during morphs", () =
                 { time: 8, assetId: "asset-b" },
             ],
         })),
+    }, new Set(assets.keys()));
+
+    assert.throws(
+        () => validateCompositionComplexity(composition, assets),
+        /8192-coefficient scene budget/,
+    );
+});
+
+test("scene complexity includes distinct matte morph assets", () => {
+    const asset = (offset, count) => ({
+        strokes: [{
+            coefficients: Array.from(
+                { length: count },
+                (_, index) => ({ frequency: index + offset }),
+            ),
+        }],
+    });
+    const assets = new Map([
+        ["visual", asset(0, 1)],
+        ["matte-a", asset(0, 2048)],
+        ["matte-b", asset(2048, 2048)],
+    ]);
+    const composition = normalizeComposition({
+        format: "fourier-composition/v1",
+        duration: 8,
+        layers: [
+            { id: "background", assetId: "visual", zIndex: 0 },
+            ...Array.from({ length: 3 }, (_, index) => ({
+                id: `foreground-${index}`,
+                assetId: "visual",
+                matteAssetId: "matte-a",
+                occludes: { layerIds: ["background"] },
+                zIndex: index + 1,
+                keyframes: [
+                    { time: 0, matteAssetId: "matte-a" },
+                    { time: 8, matteAssetId: "matte-b" },
+                ],
+            })),
+        ],
     }, new Set(assets.keys()));
 
     assert.throws(

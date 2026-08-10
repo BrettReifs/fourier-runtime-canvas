@@ -24,7 +24,7 @@ assets on one timeline. Semantic scenes provide upright text, a shared chart
 scale, aligned thresholds, explicit palettes, safe areas, responsive aspect
 ratios, deterministic entry animation, accessible summaries, and synthesized
 audio cues. Fourier layers retain transform, opacity, reveal, shape-morph,
-procedural-motion, and spectral-audio settings.
+procedural-motion, spectral-audio, and animated occlusion-matte settings.
 **Signal runtime** visualizes live sine-series inputs and exposes a loopback
 script bridge.
 
@@ -62,7 +62,7 @@ separate from the transport and renderer.
 | --- | --- |
 | `extension.mjs` | Copilot actions, schemas, loopback HTTP/SSE, persistence, lifecycle |
 | `fourier.mjs` | Path validation, normalization, resampling, DFT, coefficient selection |
-| `composition.mjs` | Hybrid semantic/Fourier layer, keyframe, motion, audio, and aggregate-limit normalization |
+| `composition.mjs` | Hybrid semantic/Fourier layer, keyframe, matte, motion, audio, and aggregate-limit normalization |
 | `presentation.mjs` | Typed KPI creation and patching, compact summaries, and responsive layout math |
 | `history.mjs` | Bounded semantic undo and redo snapshots |
 | `renderer.mjs` | Interactive browser UI, reconstruction, animation, Web Audio |
@@ -80,6 +80,7 @@ separate from the transport and renderer.
 | Responsive layout | Persisted 16:9, 4:3, or 9:16 scene fitted safely into wide and narrow viewports |
 | Animation | Position, scale, rotation, opacity, reveal, easing, timeline playback |
 | Morphing | Complex-coefficient interpolation between assets selected at keyframes |
+| Occlusion | Animated, padded Fourier silhouettes mask selected lower-depth layers |
 | Motion | Optional procedural line movement that does not alter stored coefficients |
 | Audio | Short Web Audio cues derived from strong stored frequency bins |
 | Automation | Agent actions plus JSON HTTP endpoints and live SSE updates |
@@ -189,6 +190,80 @@ and phase values. `get_frequency_asset`, `list_frequency_assets`,
 `undo_composition`, `redo_composition`, and `get_bridge_info` support the rest
 of the workflow.
 
+### Animated occlusion mattes
+
+A Fourier layer can hide selected scenery behind a filled coefficient-only
+silhouette. `occludes.layerIds` selects explicit lower layers and
+`occludes.zIndices` selects every lower layer at those depths. The optional
+`matteAssetId` references a distinct closed silhouette; without it, the
+layer's animated visual asset is used. `mattePadding` expands the mask in CSS
+pixels, defaults to `3` to prevent line leakage, and accepts values from `0`
+through `16`.
+
+Keyframes may override `matteAssetId`. The renderer interpolates consecutive
+matte assets by stroke index and frequency, matching the owning layer's
+transform, easing, reveal, opacity, and procedural motion. Use matching stroke
+topology across matte assets for the cleanest transition.
+
+```json
+{
+  "id": "walking-stage",
+  "format": "fourier-composition/v1",
+  "revision": 0,
+  "duration": 8,
+  "layers": [
+    {
+      "id": "scenery",
+      "assetId": "forest-lines",
+      "zIndex": 0,
+      "keyframes": []
+    },
+    {
+      "id": "walker",
+      "assetId": "walker-lines",
+      "matteAssetId": "walker-silhouette",
+      "mattePadding": 3,
+      "occludes": {
+        "layerIds": ["scenery"],
+        "zIndices": []
+      },
+      "zIndex": 2,
+      "keyframes": [
+        {
+          "time": 0,
+          "x": -0.8,
+          "reveal": 1
+        },
+        {
+          "time": 8,
+          "x": 0.8,
+          "reveal": 1
+        }
+      ]
+    }
+  ]
+}
+```
+
+The named asset IDs in this example are placeholders for assets already loaded
+into the active workspace.
+
+### Grouped keyframe editing
+
+Click a diamond to select one keyframe. Ctrl-click or Cmd-click toggles
+individual keyframes, including keyframes on different layers. Shift-click
+selects a contiguous range only within the anchor keyframe's layer; a
+cross-layer Shift-click starts a new single selection. Mixed fields render
+blank with a `Mixed` placeholder. Entering a value updates that field across
+the selection while untouched mixed fields remain unchanged. For grouped
+timing, Time / group start moves the earliest selected keyframe to the entered
+time and preserves the spacing between selected keyframes.
+
+Click empty track space or press Escape to clear selection. Delete or Backspace,
+or the visible Delete button, removes the selected keyframes while retaining at
+least one keyframe per Fourier layer. Each grouped save or deletion is one
+composition-history change and can be undone with Ctrl/Cmd+Z.
+
 ## Loopback HTTP API
 
 Call the agent-only `get_bridge_info` action to discover the per-instance base
@@ -268,7 +343,8 @@ Compositions accept at most 64 layers, 128 keyframes per layer, 1,024
 keyframes in total, 8,192 active scene coefficients, 256 active strokes, and a
 300-second duration. KPI presentations accept at most 32 values and 2,048
 semantic text characters in aggregate. Asset playback duration is limited to 60 seconds. The
-renderer shares a 12,000-sample frame budget across visible layers and builds
+scene budgets include distinct matte morph assets. The renderer shares a
+12,000-sample frame budget across visible layers and builds
 morph frequency maps once per stroke rather than once per sample. Coordinates,
 imported frequency bins, coefficient amplitudes, phases, and live-series
 numeric values have explicit magnitude ceilings. History keeps 50 semantic

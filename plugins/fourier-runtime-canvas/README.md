@@ -2,7 +2,9 @@
 
 A GitHub Copilot canvas for compact semantic KPI presentations and
 frequency-domain path animation. Native Canvas 2D text, bars, axes, and
-thresholds can coexist with coefficient-only Fourier path layers.
+thresholds can coexist with coefficient-only Fourier path layers. Fourier
+layers can use animated, padded silhouette assets to occlude selected
+lower-depth layers.
 
 ## Installation
 

@@ -287,6 +287,7 @@ const KEYFRAME_SCHEMA = {
     properties: {
         time: { type: "number", minimum: 0, maximum: 300 },
         assetId: { type: "string", maxLength: 120 },
+        matteAssetId: { type: "string", maxLength: 120 },
         x: { type: "number", minimum: -2, maximum: 2 },
         y: { type: "number", minimum: -2, maximum: 2 },
         scale: { type: "number", minimum: 0, maximum: 10 },
@@ -461,6 +462,32 @@ const COMPOSITION_SCHEMA = {
                         enum: ["fourier", "text", "bar-chart", "line"],
                     },
                     assetId: { type: "string", maxLength: 120 },
+                    matteAssetId: { type: "string", maxLength: 120 },
+                    mattePadding: {
+                        type: "number",
+                        minimum: 0,
+                        maximum: COMPOSITION_LIMITS.maxMattePadding,
+                    },
+                    occludes: {
+                        type: "object",
+                        properties: {
+                            layerIds: {
+                                type: "array",
+                                uniqueItems: true,
+                                items: { type: "string", maxLength: 120 },
+                            },
+                            zIndices: {
+                                type: "array",
+                                uniqueItems: true,
+                                items: {
+                                    type: "integer",
+                                    minimum: -COMPOSITION_LIMITS.maxZIndexMagnitude,
+                                    maximum: COMPOSITION_LIMITS.maxZIndexMagnitude,
+                                },
+                            },
+                        },
+                        additionalProperties: false,
+                    },
                     start: { type: "number", minimum: 0, maximum: 300 },
                     end: { type: "number", minimum: 0, maximum: 300 },
                     zIndex: {
