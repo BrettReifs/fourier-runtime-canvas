@@ -6,6 +6,7 @@ import {
 import {
     addAssetPoint,
     deleteSelectedAssetPoints,
+    detectCirclePrimitive,
     moveSelectedAssetPoints,
     reconstructAssetGeometry,
     reconstructStrokePoints,
@@ -529,6 +530,29 @@ export function renderHtml(nonce) {
     }
     .creator-canvas { position: relative; min-height: 420px; }
     .creator-canvas canvas { height: 420px; }
+    .circle-primitive-card {
+      min-height: 420px;
+      display: grid;
+      align-content: center;
+      gap: 18px;
+      padding: 28px;
+    }
+    #drawing[hidden],
+    .circle-primitive-card[hidden],
+    #freeform-asset-controls[hidden],
+    #drawing-controls[hidden] { display: none; }
+    .primitive-equation {
+      margin: 0;
+      color: var(--accent);
+      font-family: var(--font-mono, Consolas, monospace);
+      font-size: clamp(16px, 2vw, 22px);
+      text-align: center;
+    }
+    .primitive-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
     .stroke-list { display: flex; gap: 7px; flex-wrap: wrap; }
     .stroke-list button[aria-pressed="true"] {
       border-color: var(--accent);
@@ -1021,6 +1045,8 @@ export function renderHtml(nonce) {
     @media (max-width: 780px) {
       .grid { grid-template-columns: 1fr; }
       .creator-canvases { grid-template-columns: 1fr; }
+      .primitive-grid { grid-template-columns: 1fr; }
+      .circle-primitive-card { min-height: 300px; padding: 18px; }
       .creator-canvas { min-height: 300px; }
       .creator-canvas canvas { height: 300px; }
       .timeline-track, .timeline-ruler { grid-template-columns: 96px 1fr; }
@@ -1101,9 +1127,27 @@ export function renderHtml(nonce) {
           <output id="creator-library-status" class="creator-status" aria-live="polite"></output>
         </section>
         <div class="creator-canvases">
-          <section class="panel creator-canvas plot-wrap" aria-label="Editable source geometry">
-            <span class="plot-label">Editable reconstruction</span>
+          <section id="creator-source-panel" class="panel creator-canvas plot-wrap" aria-label="Editable source geometry">
+            <span id="creator-source-label" class="plot-label">Editable reconstruction</span>
             <canvas id="drawing" tabindex="0">Select and move reconstructed control points.</canvas>
+            <div id="circle-primitive-controls" class="circle-primitive-card" hidden>
+              <p class="primitive-equation">z(t) = center + radius · e<sup>i(t + phase)</sup></p>
+              <div class="primitive-grid">
+                <label class="field">Center X
+                  <input id="circle-center-x" type="number" min="-1000000" max="1000000" step="0.01">
+                </label>
+                <label class="field">Center Y
+                  <input id="circle-center-y" type="number" min="-1000000" max="1000000" step="0.01">
+                </label>
+                <label class="field">Radius
+                  <input id="circle-radius" type="number" min="0.000001" max="1000000" step="0.01">
+                </label>
+                <label class="field">Phase
+                  <input id="circle-phase" type="number" min="-1000000" max="1000000" step="0.01">
+                </label>
+              </div>
+              <p class="creator-status">Exact circle · 2 coefficients · no reconstructed nodes</p>
+            </div>
           </section>
           <section class="panel creator-canvas plot-wrap" aria-label="Fourier output preview">
             <span class="plot-label">Fourier-rendered output</span>
@@ -1115,18 +1159,22 @@ export function renderHtml(nonce) {
             <label class="field">Asset name
               <input id="asset-name" type="text" maxlength="120" value="Untitled Fourier drawing">
             </label>
-            <label class="field">Sine components
-              <span class="field-row">
-                <input id="term-limit" type="range" min="8" max="128" step="4" value="64">
-                <output id="term-limit-value">64</output>
-              </span>
-            </label>
-            <label class="checkbox-field"><input id="close-strokes" type="checkbox"> Close each new stroke</label>
-            <label class="checkbox-field"><input id="asset-closed" type="checkbox"> Selected stroke is closed</label>
-            <div id="creator-strokes" class="stroke-list" aria-label="Asset strokes"></div>
+            <div id="freeform-asset-controls">
+              <label class="field">Sine components
+                <span class="field-row">
+                  <input id="term-limit" type="range" min="8" max="128" step="4" value="64">
+                  <output id="term-limit-value">64</output>
+                </span>
+              </label>
+              <label class="checkbox-field"><input id="close-strokes" type="checkbox"> Close each new stroke</label>
+              <label class="checkbox-field"><input id="asset-closed" type="checkbox"> Selected stroke is closed</label>
+              <div id="creator-strokes" class="stroke-list" aria-label="Asset strokes"></div>
+              <div id="drawing-controls" class="controls">
+                <button id="add-asset-point" type="button">Add point</button>
+                <button id="delete-asset-element" type="button">Delete selection</button>
+              </div>
+            </div>
             <div class="controls">
-              <button id="add-asset-point" type="button">Add point</button>
-              <button id="delete-asset-element" type="button">Delete selection</button>
               <button id="reset-asset-edit" type="button">Reset changes</button>
               <button id="save-asset-edit" class="primary" type="button">Save asset</button>
             </div>
@@ -1362,6 +1410,7 @@ export function renderHtml(nonce) {
    ${createTutorialDemoCache.toString()}
    ${reconstructStrokePoints.toString()}
    ${reconstructAssetGeometry.toString()}
+   ${detectCirclePrimitive.toString()}
    ${selectAssetElement.toString()}
    ${moveSelectedAssetPoints.toString()}
    ${addAssetPoint.toString()}
@@ -1415,6 +1464,7 @@ export function renderHtml(nonce) {
       creatorInitialized: false,
       creatorOriginalAsset: null,
       creatorGeometry: null,
+      creatorPrimitive: null,
       creatorPreviewAsset: null,
       creatorSelection: [],
       creatorDrag: null,
@@ -2611,6 +2661,7 @@ export function renderHtml(nonce) {
 
     function drawInput() {
       if (state.mode !== "create") return;
+      if (state.creatorPrimitive) return;
       const rect = fitCanvas(canvases.drawing, contexts.drawing);
       const width = rect.width;
       const height = rect.height;
@@ -3055,7 +3106,15 @@ export function renderHtml(nonce) {
     }
 
     function creatorEditPayload() {
-      if (!state.creatorGeometry || !state.creatorOriginalAsset) return null;
+      if (!state.creatorOriginalAsset) return null;
+      if (state.creatorPrimitive) {
+        return {
+          name: document.querySelector("#asset-name").value,
+          primitive: state.creatorPrimitive,
+          runtime: state.creatorOriginalAsset.runtime,
+        };
+      }
+      if (!state.creatorGeometry) return null;
       return {
         name: document.querySelector("#asset-name").value,
         termLimit: Number(document.querySelector("#term-limit").value),
@@ -3067,6 +3126,13 @@ export function renderHtml(nonce) {
     function creatorHasUnsavedChanges() {
       const payload = creatorEditPayload();
       if (!payload || !state.creatorOriginalAsset) return false;
+      if (state.creatorPrimitive) {
+        return JSON.stringify(payload) !== JSON.stringify({
+          name: state.creatorOriginalAsset.name,
+          primitive: detectCirclePrimitive(state.creatorOriginalAsset),
+          runtime: state.creatorOriginalAsset.runtime,
+        });
+      }
       const baseline = reconstructAssetGeometry(state.creatorOriginalAsset);
       return JSON.stringify(payload) !== JSON.stringify({
         name: state.creatorOriginalAsset.name,
@@ -3127,10 +3193,40 @@ export function renderHtml(nonce) {
         geometry.strokes[selectedStroke]?.closed ?? false;
     }
 
+    function renderCreatorEditorMode() {
+      const primitive = state.creatorPrimitive;
+      const primitiveControls = document.querySelector("#circle-primitive-controls");
+      const freeformControls = document.querySelector("#freeform-asset-controls");
+      const drawingControls = document.querySelector("#drawing-controls");
+      canvases.drawing.hidden = Boolean(primitive);
+      primitiveControls.hidden = !primitive;
+      freeformControls.hidden = Boolean(primitive);
+      drawingControls.hidden = Boolean(primitive);
+      document.querySelector("#creator-source-label").textContent = primitive
+        ? "Perfect circle primitive"
+        : "Editable reconstruction";
+      document.querySelector("#creator-source-panel").setAttribute(
+        "aria-label",
+        primitive ? "Perfect circle controls" : "Editable source geometry"
+      );
+      if (!primitive) return;
+      for (const [id, value] of [
+        ["circle-center-x", primitive.centerX],
+        ["circle-center-y", primitive.centerY],
+        ["circle-radius", primitive.radius],
+        ["circle-phase", primitive.phase],
+      ]) {
+        const input = document.querySelector("#" + id);
+        input.value = value;
+        input.removeAttribute("aria-invalid");
+      }
+    }
+
     function setCreatorNewAssetMode() {
       state.creatorAssetId = null;
       state.creatorOriginalAsset = null;
       state.creatorGeometry = null;
+      state.creatorPrimitive = null;
       state.creatorPreviewAsset = null;
       state.creatorSelection = [];
       state.strokes = [];
@@ -3151,6 +3247,7 @@ export function renderHtml(nonce) {
         redoCount: 0,
       });
       renderCreatorStrokes();
+      renderCreatorEditorMode();
       drawInput();
       drawCreatorPreview();
     }
@@ -3163,9 +3260,12 @@ export function renderHtml(nonce) {
       const asset = await loadAssetById(assetId);
       state.creatorAssetId = asset.id;
       state.creatorOriginalAsset = structuredClone(asset);
-      state.creatorGeometry = reconstructAssetGeometry(asset);
+      state.creatorPrimitive = detectCirclePrimitive(asset);
+      state.creatorGeometry = state.creatorPrimitive
+        ? null
+        : reconstructAssetGeometry(asset);
       state.creatorPreviewAsset = asset;
-      state.creatorSelection = [{ strokeIndex: 0 }];
+      state.creatorSelection = state.creatorPrimitive ? [] : [{ strokeIndex: 0 }];
       document.querySelector("#creator-asset-library").value = asset.id;
       document.querySelector("#creator-editor-title").textContent = "Edit " + asset.name;
       document.querySelector("#asset-name").value = asset.name;
@@ -3181,11 +3281,13 @@ export function renderHtml(nonce) {
         document.querySelector("#" + id).disabled = false;
       }
       document.querySelector("#creator-library-status").textContent =
-        "Editing revision " + (asset.revision ?? 0) + " under stable ID " + asset.id + ".";
+        "Editing revision " + (asset.revision ?? 0) + " under stable ID " + asset.id +
+        (state.creatorPrimitive ? " as an exact two-coefficient circle." : ".");
       updateCreatorHistory(await requestJson(
         "/api/assets/" + encodeURIComponent(asset.id) + "/history"
       ));
       renderCreatorStrokes();
+      renderCreatorEditorMode();
       drawInput();
       drawCreatorPreview();
     }
@@ -4230,6 +4332,24 @@ export function renderHtml(nonce) {
           else context.lineTo(sampleX, sampleY);
         }
         context.stroke();
+      } else if (frame.kind === "circle-phase") {
+        const angle = eased * Math.PI;
+        const radius = 64;
+        context.strokeStyle = token("--accent", "#2f81f7");
+        context.lineWidth = 8;
+        context.beginPath();
+        context.arc(width / 2, height / 2, radius, 0, Math.PI * 2);
+        context.stroke();
+        context.fillStyle = token("--text-color-default", "#e6edf3");
+        context.beginPath();
+        context.arc(
+          width / 2 + Math.cos(angle) * radius,
+          height / 2 + Math.sin(angle) * radius,
+          10,
+          0,
+          Math.PI * 2
+        );
+        context.fill();
       } else if (frame.kind === "occlusion") {
         context.strokeStyle = token("--text-color-muted", "#8b949e");
         context.lineWidth = 3;
@@ -4733,8 +4853,34 @@ export function renderHtml(nonce) {
       if (state.creatorGeometry) queueCreatorPreview();
     });
     document.querySelector("#asset-name").addEventListener("input", () => {
-      if (state.creatorGeometry) queueCreatorPreview();
+      if (state.creatorGeometry || state.creatorPrimitive) queueCreatorPreview();
     });
+    for (const [id, property] of [
+      ["circle-center-x", "centerX"],
+      ["circle-center-y", "centerY"],
+      ["circle-radius", "radius"],
+      ["circle-phase", "phase"],
+    ]) {
+      document.querySelector("#" + id).addEventListener("input", (event) => {
+        if (!state.creatorPrimitive) return;
+        const value = Number(event.target.value);
+        if (!Number.isFinite(value) || (property === "radius" && value <= 0)) {
+          event.target.setAttribute("aria-invalid", "true");
+          document.querySelector("#save-asset-edit").disabled = true;
+          document.querySelector("#asset-edit-status").textContent =
+            property === "radius"
+              ? "Circle radius must be greater than zero."
+              : "Circle controls require finite numeric values.";
+          return;
+        }
+        event.target.removeAttribute("aria-invalid");
+        document.querySelector("#save-asset-edit").disabled = Boolean(
+          document.querySelector("#circle-primitive-controls [aria-invalid='true']")
+        );
+        state.creatorPrimitive = { ...state.creatorPrimitive, [property]: value };
+        queueCreatorPreview();
+      });
+    }
     document.querySelector("#creator-asset-library").addEventListener(
       "change",
       (event) => {
@@ -4751,10 +4897,14 @@ export function renderHtml(nonce) {
     document.querySelector("#save-asset-edit").addEventListener("click", saveCreatorAsset);
     document.querySelector("#reset-asset-edit").addEventListener("click", () => {
       if (!state.creatorOriginalAsset) return;
-      state.creatorGeometry = reconstructAssetGeometry(state.creatorOriginalAsset);
+      state.creatorPrimitive = detectCirclePrimitive(state.creatorOriginalAsset);
+      state.creatorGeometry = state.creatorPrimitive
+        ? null
+        : reconstructAssetGeometry(state.creatorOriginalAsset);
       state.creatorPreviewAsset = state.creatorOriginalAsset;
-      state.creatorSelection = [{ strokeIndex: 0 }];
+      state.creatorSelection = state.creatorPrimitive ? [] : [{ strokeIndex: 0 }];
       renderCreatorStrokes();
+      renderCreatorEditorMode();
       drawInput();
       drawCreatorPreview();
       document.querySelector("#asset-edit-status").textContent =

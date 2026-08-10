@@ -15,6 +15,8 @@ revision-bound updates to the existing asset ID, preserving scene and matte
 references. Learn keeps sine-series fundamentals out of the primary workflow.
 Every editor field gets an accessible info card from one centralized tutorial
 registry with deterministic local demos and reduced-motion fallbacks.
+Exact single-harmonic circles use center, radius, and phase controls instead of
+a reconstructed node cloud and remain two-coefficient assets after saving.
 
 ## Installation
 

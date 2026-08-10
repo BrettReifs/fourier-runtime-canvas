@@ -96,9 +96,22 @@ test("Creator edits stable assets with transient side-by-side previews", () => {
     assert.match(html, /id="creator-asset-library"/);
     assert.match(html, /id="drawing" tabindex="0"/);
     assert.match(html, /id="creator-preview"/);
+    assert.match(html, /id="circle-primitive-controls"/);
+    assert.match(html, /id="circle-radius"/);
+    assert.match(html, /id="drawing-controls"/);
     assert.match(html, /id="save-asset-edit"/);
     assert.match(html, /id="undo-asset-edit"/);
     assert.match(script, /reconstructAssetGeometry\(asset\)/);
+    assert.match(script, /detectCirclePrimitive\(asset\)/);
+    assert.match(
+        script,
+        /if \(state\.creatorPrimitive\) \{[\s\S]*primitive: state\.creatorPrimitive/,
+    );
+    assert.match(
+        script,
+        /circle-primitive-controls \[aria-invalid='true'\]/,
+    );
+    assert.match(script, /input\.removeAttribute\("aria-invalid"\)/);
     assert.match(script, /function creatorHasUnsavedChanges\(\)/);
     assert.match(script, /window\.confirm\("Discard unsaved point and stroke edits\?"\)/);
     assert.match(script, /\/preview"[\s\S]*method: "POST"/);
@@ -109,6 +122,10 @@ test("Creator edits stable assets with transient side-by-side previews", () => {
     assert.match(
         html,
         /@media \(max-width: 780px\)[\s\S]*\.field-info \{ width: 44px; min-height: 44px; \}/,
+    );
+    assert.match(
+        html,
+        /@media \(max-width: 780px\)[\s\S]*\.circle-primitive-card \{ min-height: 300px; padding: 18px; \}/,
     );
     assert.match(html, /class="checkbox-field"><input id="asset-closed"/);
     assert.match(script, /function setMode\(mode\) \{\s+closeFieldTutorial\(\);/);

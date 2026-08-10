@@ -9,6 +9,117 @@ function inputFingerprint(input) {
     });
 }
 
+function finitePrimitiveNumber(value, label) {
+    if (!Number.isFinite(value) || Math.abs(value) > 1_000_000) {
+        throw new Error(`${label} must be a finite number no greater than 1000000.`);
+    }
+    return value;
+}
+
+function normalizeCirclePrimitive(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+        throw new Error("Circle primitive controls must be an object.");
+    }
+    const allowed = new Set([
+        "kind",
+        "centerX",
+        "centerY",
+        "radius",
+        "phase",
+        "frequency",
+    ]);
+    for (const key of Object.keys(input)) {
+        if (!allowed.has(key)) throw new Error(`Circle primitive does not support ${key}.`);
+    }
+    if (input.kind !== "circle") throw new Error("Primitive kind must be circle.");
+    const radius = finitePrimitiveNumber(input.radius, "Circle radius");
+    if (radius <= 0) throw new Error("Circle radius must be greater than zero.");
+    if (![1, -1].includes(input.frequency)) {
+        throw new Error("Circle frequency must be 1 or -1.");
+    }
+    return {
+        kind: "circle",
+        centerX: finitePrimitiveNumber(input.centerX, "Circle center X"),
+        centerY: finitePrimitiveNumber(input.centerY, "Circle center Y"),
+        radius,
+        phase: finitePrimitiveNumber(input.phase, "Circle phase"),
+        frequency: input.frequency,
+    };
+}
+
+export function detectCirclePrimitive(asset, epsilon = 1e-9) {
+    if (
+        !asset
+        || !Array.isArray(asset.strokes)
+        || asset.strokes.length !== 1
+        || asset.strokes[0].closed !== true
+        || !Number.isFinite(epsilon)
+        || epsilon < 0
+    ) {
+        return null;
+    }
+    const coefficients = asset.strokes[0].coefficients.filter(
+        (coefficient) => coefficient.amplitude > epsilon || coefficient.frequency === 0,
+    );
+    const center = coefficients.find((coefficient) => coefficient.frequency === 0);
+    const harmonics = coefficients.filter((coefficient) => coefficient.frequency !== 0);
+    if (
+        harmonics.length !== 1
+        || ![1, -1].includes(harmonics[0].frequency)
+        || harmonics[0].amplitude <= epsilon
+    ) {
+        return null;
+    }
+    return {
+        kind: "circle",
+        centerX: center ? center.amplitude * Math.cos(center.phase) : 0,
+        centerY: center ? center.amplitude * Math.sin(center.phase) : 0,
+        radius: harmonics[0].amplitude,
+        phase: harmonics[0].phase,
+        frequency: harmonics[0].frequency,
+    };
+}
+
+function buildCircleAsset(current, input, identity) {
+    if (!detectCirclePrimitive(current)) {
+        throw new Error("Circle primitive edits require an exact single-harmonic circle asset.");
+    }
+    const primitive = normalizeCirclePrimitive(input.primitive);
+    const centerAmplitude = Math.hypot(primitive.centerX, primitive.centerY);
+    return {
+        id: current.id,
+        format: "fourier-path/v1",
+        name: typeof input.name === "string" && input.name.trim()
+            ? input.name.trim().slice(0, 120)
+            : current.name,
+        createdAt: current.createdAt,
+        updatedAt: identity.updatedAt,
+        revision: identity.revision,
+        coordinateSystem: "normalized-complex",
+        strokeCount: 1,
+        termLimit: 2,
+        strokes: [{
+            closed: true,
+            sampleCount: current.strokes[0]?.sampleCount ?? 256,
+            coefficients: [
+                {
+                    frequency: 0,
+                    amplitude: centerAmplitude,
+                    phase: centerAmplitude === 0
+                        ? 0
+                        : Math.atan2(primitive.centerY, primitive.centerX),
+                },
+                {
+                    frequency: primitive.frequency,
+                    amplitude: primitive.radius,
+                    phase: primitive.phase,
+                },
+            ],
+        }],
+        runtime: input.runtime ?? current.runtime,
+    };
+}
+
 export function reconstructStrokePoints(stroke, pointCount = stroke.sampleCount) {
     if (
         !stroke
@@ -176,6 +287,12 @@ function baselineInput(current, input) {
 }
 
 export function buildAssetPreview(current, input) {
+    if (input.primitive !== undefined) {
+        return buildCircleAsset(current, input, {
+            updatedAt: current.updatedAt ?? current.createdAt,
+            revision: current.revision ?? 0,
+        });
+    }
     const drawing = drawingInput(current, input);
     return transformDrawing(drawing, {
         id: current.id,
@@ -199,6 +316,41 @@ export function buildAssetUpdate(
         error.code = "stale_asset_revision";
         error.current = { id: current.id, revision };
         throw error;
+    }
+    if (input.primitive !== undefined) {
+        const currentPrimitive = detectCirclePrimitive(current);
+        if (!currentPrimitive) {
+            throw new Error(
+                "Circle primitive edits require an exact single-harmonic circle asset.",
+            );
+        }
+        const primitive = normalizeCirclePrimitive(input.primitive);
+        const name = typeof input.name === "string" && input.name.trim()
+            ? input.name.trim().slice(0, 120)
+            : current.name;
+        if (JSON.stringify({
+            name,
+            primitive,
+            runtime: input.runtime ?? current.runtime,
+        }) === JSON.stringify({
+            name: current.name,
+            primitive: currentPrimitive,
+            runtime: current.runtime,
+        })) {
+            return { asset: current, changed: false };
+        }
+        const preview = buildCircleAsset(current, input, {
+            updatedAt: current.updatedAt ?? current.createdAt,
+            revision,
+        });
+        return {
+            asset: {
+                ...preview,
+                updatedAt,
+                revision: revision + 1,
+            },
+            changed: true,
+        };
     }
     const drawing = drawingInput(current, input);
     if (inputFingerprint(drawing) === inputFingerprint(baselineInput(current, input))) {

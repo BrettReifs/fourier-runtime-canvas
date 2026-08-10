@@ -42,6 +42,10 @@ const requiredFields = [
     "matte-padding",
     "occlusion-targets",
     "asset-closed",
+    "circle-center-x",
+    "circle-center-y",
+    "circle-radius",
+    "circle-phase",
 ];
 
 test("every editable scene field has complete tutorial metadata and a demo", () => {

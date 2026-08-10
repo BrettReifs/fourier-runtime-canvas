@@ -212,6 +212,12 @@ points, Shift increases the keyboard step, Delete removes safe selections, and
 the closed-path control changes topology. The right canvas overlays the saved
 revision and the current Fourier preview.
 
+An exact closed circle is reduced further: when an asset contains only a DC
+center term and one `+1` or `-1` harmonic, Create replaces the node editor with
+center, radius, and phase controls. Preview and save keep the circle at exactly
+two coefficients, so changing its size or reveal start cannot introduce
+freeform sampling noise.
+
 Pointer movement updates browser geometry and a non-persistent loopback preview.
 Save sends one revision-bound update. An unchanged save is a no-op. A successful
 save keeps `asset.id` and `createdAt`, increments `revision`, and therefore

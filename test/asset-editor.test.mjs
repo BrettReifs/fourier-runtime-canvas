@@ -6,6 +6,7 @@ import {
     buildAssetPreview,
     buildAssetUpdate,
     deleteSelectedAssetPoints,
+    detectCirclePrimitive,
     moveSelectedAssetPoints,
     reconstructAssetGeometry,
     selectAssetElement,
@@ -52,6 +53,108 @@ test("coefficient reconstruction is deterministic and frequency-only", () => {
     assert(Math.abs(first.strokes[0].points[2].x) < 1e-12);
     assert(Math.abs(first.strokes[0].points[2].y - 1) < 1e-12);
     assert(!JSON.stringify(asset).includes('"points"'));
+});
+
+test("exact single-harmonic circles expose primitive controls without nodes", () => {
+    const asset = circleAsset();
+    const primitive = detectCirclePrimitive(asset);
+
+    assert.deepEqual(primitive, {
+        kind: "circle",
+        centerX: 0,
+        centerY: 0,
+        radius: 1,
+        phase: 0,
+        frequency: 1,
+    });
+
+    const preview = buildAssetPreview(asset, {
+        name: asset.name,
+        primitive: {
+            ...primitive,
+            centerX: 0.25,
+            centerY: -0.5,
+            radius: 0.75,
+            phase: Math.PI / 2,
+        },
+        runtime: asset.runtime,
+    });
+
+    assert.equal(preview.strokes.length, 1);
+    assert.equal(preview.strokes[0].coefficients.length, 2);
+    assert.deepEqual(
+        preview.strokes[0].coefficients.map(({ frequency }) => frequency),
+        [0, 1],
+    );
+    assert(Math.abs(preview.strokes[0].coefficients[0].amplitude - Math.hypot(0.25, -0.5)) < 1e-12);
+    assert.equal(preview.strokes[0].coefficients[1].amplitude, 0.75);
+    assert.equal(preview.strokes[0].coefficients[1].phase, Math.PI / 2);
+    assert(!JSON.stringify(preview).includes('"points"'));
+
+    const unchanged = buildAssetUpdate(asset, asset.revision, {
+        name: asset.name,
+        primitive,
+        runtime: asset.runtime,
+    });
+    assert.equal(unchanged.changed, false);
+
+    const updated = buildAssetUpdate(asset, asset.revision, {
+        name: asset.name,
+        primitive: { ...primitive, radius: 2 },
+        runtime: asset.runtime,
+    }, "2026-01-02T00:00:00.000Z");
+    assert.equal(updated.changed, true);
+    assert.equal(updated.asset.id, asset.id);
+    assert.equal(updated.asset.revision, asset.revision + 1);
+    assert.equal(updated.asset.strokes[0].coefficients.length, 2);
+});
+
+test("circle detection rejects multi-harmonic and open assets", () => {
+    const multiHarmonic = circleAsset();
+    multiHarmonic.strokes[0].coefficients.push({
+        frequency: 2,
+        amplitude: 0.1,
+        phase: 0,
+    });
+    assert.equal(detectCirclePrimitive(multiHarmonic), null);
+
+    const open = circleAsset();
+    open.strokes[0].closed = false;
+    assert.equal(detectCirclePrimitive(open), null);
+
+    assert.throws(
+        () => buildAssetUpdate(multiHarmonic, multiHarmonic.revision, {
+            name: multiHarmonic.name,
+            primitive: {
+                kind: "circle",
+                centerX: 0,
+                centerY: 0,
+                radius: 1,
+                phase: 0,
+                frequency: 1,
+            },
+            runtime: multiHarmonic.runtime,
+        }),
+        /require an exact single-harmonic circle/,
+    );
+});
+
+test("off-center primitive round trips remain no-op saves", () => {
+    const asset = circleAsset();
+    asset.strokes[0].coefficients[0] = {
+        frequency: 0,
+        amplitude: 0.3701234567891234,
+        phase: 1.234567891234,
+    };
+    const primitive = detectCirclePrimitive(asset);
+    const result = buildAssetUpdate(asset, asset.revision, {
+        name: asset.name,
+        primitive,
+        runtime: asset.runtime,
+    });
+
+    assert.equal(result.changed, false);
+    assert.equal(result.asset, asset);
 });
 
 test("element selection and safe point editing preserve source immutability", () => {
